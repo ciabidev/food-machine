@@ -1,0 +1,38 @@
+{
+  "name": "discordjs-bot-template",
+  "version": "1.0.0",
+  "description": "A minimal Discord.js bot template",
+  "homepage": "https://github.com/ciabidev/discordjs-bot-template#readme",
+  "bugs": {
+    "url": "https://github.com/ciabidev/discordjs-bot-template/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ciabidev/discordjs-bot-template.git"
+  },
+  "license": "MIT",
+  "author": "github.com/ciabidev",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.24.2",
+    "dotenv": "^17.2.3",
+    "mongodb": "^7.4.0"
+  },
+  "imports": {
+    "#commands/*": "./commands/*.js",
+    "#config": "./src/config.js",
+    "#events/*": "./events/*.js",
+    "#modules/*": "./src/modules/*.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}
