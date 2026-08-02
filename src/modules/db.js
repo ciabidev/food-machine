@@ -72,6 +72,15 @@ async function getLevelProfile(guildId, userId) {
   return levelProfile;
 }
 
+async function getLevelRank(guildId, xp) {
+  const profilesAhead = await db.collection("level_profiles").countDocuments({
+    guild_id: String(guildId),
+    xp: { $gt: xp },
+  });
+
+  return profilesAhead + 1;
+}
+
 async function setLevelProfile(guildId, userId, changes = {}) {
   const levelProfiles = db.collection("level_profiles");
   return levelProfiles.updateOne(
@@ -129,8 +138,8 @@ async function setLevelingXpRange(guildId, minimum, maximum) {
 }
 
 async function setLevelingCooldown(guildId, seconds) {
-  if (!Number.isInteger(seconds) || seconds < 10 || seconds > 3_600) {
-    throw new RangeError("Cooldown must be between 10 and 3600 seconds.");
+  if (!Number.isInteger(seconds) || seconds < 0) {
+    throw new RangeError("Cooldown must be a positive whole number.");
   }
 
   return updateGuildSettings(guildId, {
@@ -212,6 +221,7 @@ module.exports = {
   getCollection,
   getSettings,
   getLevelProfile,
+  getLevelRank,
   setLevelProfile,
   setLevelingEnabled,
   setLevelingXpRange,

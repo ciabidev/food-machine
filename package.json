@@ -19,6 +19,7 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "canvacord": "^6.0.4",
     "discord.js": "^14.24.2",
     "dotenv": "^17.2.3",
     "mongodb": "^7.4.0"

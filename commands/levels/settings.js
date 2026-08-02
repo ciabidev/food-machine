@@ -6,11 +6,9 @@ const {
   MessageFlags,
   PermissionFlagsBits,
   SeparatorBuilder,
-  SlashCommandBuilder,
+  SlashCommandSubcommandBuilder,
   TextDisplayBuilder,
 } = require("discord.js");
-
-const CUSTOM_ID_PREFIX = "level-settings:";
 
 function formatList(values, formatter) {
   if (values.length === 0) return "None";
@@ -46,29 +44,29 @@ function formatSettings(settings) {
 function buildPanel(settings) {
   const mainButtons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}toggle`)
+      .setCustomId("level-settings:toggle")
       .setLabel(settings.enabled ? "Disable leveling" : "Enable leveling")
       .setStyle(settings.enabled ? ButtonStyle.Danger : ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}xp`)
+      .setCustomId("level-settings:xp")
       .setLabel("XP range")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}cooldown`)
+      .setCustomId("level-settings:cooldown")
       .setLabel("Cooldown")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}channels`)
+      .setCustomId("level-settings:channels")
       .setLabel("Channels")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}ignored-roles`)
+      .setCustomId("level-settings:ignored-roles")
       .setLabel("Ignored roles")
       .setStyle(ButtonStyle.Secondary),
   );
   const rewardButton = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`${CUSTOM_ID_PREFIX}reward`)
+      .setCustomId("level-settings:reward")
       .setLabel("Reward role")
       .setStyle(ButtonStyle.Primary),
   );
@@ -96,13 +94,19 @@ function panelResponse(settings, initial = false) {
 module.exports = {
   panelResponse,
 
-  data: new SlashCommandBuilder()
-    .setName("level-settings")
-    .setDescription("Configure this server's leveling system.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .setDMPermission(false),
+  data: new SlashCommandSubcommandBuilder()
+    .setName("settings")
+    .setDescription("Configure this server's leveling system."),
 
   async execute(interaction) {
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({
+        content: "You need Manage Server to change leveling settings.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
     await interaction.reply(panelResponse(settings.leveling, true));
   },
