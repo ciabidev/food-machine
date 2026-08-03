@@ -18,7 +18,7 @@ const client = new Client({
   ],
 });
 client.commands = new Collection();
-
+client.snipes = new Map();
 const commandsPath = path.join(__dirname, "commands");
 const commandFolders = fs
   .readdirSync(commandsPath, { withFileTypes: true })
