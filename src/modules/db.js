@@ -58,8 +58,9 @@ async function getSettings(guildId) {
 
   return {
     _id: String(guildId),
-    welcome_channel_id: null,
     ...document,
+    welcome_channel_ids: document?.welcome_channel_ids
+      ?? (document?.welcome_channel_id ? [document.welcome_channel_id] : []),
     leveling: {
       ...DEFAULT_LEVELING_SETTINGS,
       ...document?.leveling,
@@ -119,11 +120,14 @@ async function setLevelingEnabled(guildId, enabled) {
   });
 }
 
-async function setWelcomeChannel(guildId, channelId) {
+async function setWelcomeChannels(guildId, channelIds) {
+  const uniqueChannelIds = [...new Set(channelIds.map(String))];
+
   return updateGuildSettings(guildId, {
     $set: {
-      welcome_channel_id: channelId ? String(channelId) : null,
+      welcome_channel_ids: uniqueChannelIds,
     },
+    $unset: { welcome_channel_id: "" },
   });
 }
 
@@ -232,7 +236,7 @@ module.exports = {
   getLevelProfile,
   getLevelRank,
   setLevelProfile,
-  setWelcomeChannel,
+  setWelcomeChannels,
   setLevelingEnabled,
   setLevelingXpRange,
   setLevelingCooldown,

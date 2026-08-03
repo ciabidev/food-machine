@@ -1,6 +1,8 @@
 const {
+  ChannelSelectMenuBuilder,
   ChannelType,
-  MessageFlags,
+  LabelBuilder,
+  ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } = require("discord.js");
@@ -8,53 +10,34 @@ const {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("welcome")
-    .setDescription("Set or disable this server's welcome channel.")
+    .setDescription("Configure this server's welcome channels.")
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addChannelOption((option) => option
-      .setName("channel")
-      .setDescription("The welcome channel. Omit this option to disable welcomes.")
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-      .setRequired(false)),
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction) {
-    if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
-      await interaction.reply({
-        content: "You need Manage Server to change the welcome channel.",
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
+    const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
+    const channelSelect = new ChannelSelectMenuBuilder()
+      .setCustomId("welcome-settings:channels")
+      .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+      .setMinValues(0)
+      .setMaxValues(25)
+      .setRequired(false);
+    const defaults = settings.welcome_channel_ids
+      .filter((id) => interaction.guild.channels.cache.has(id))
+      .slice(0, 25);
 
-    const channel = interaction.options.getChannel("channel");
+    if (defaults.length) channelSelect.setDefaultChannels(...defaults);
 
-    if (channel) {
-      const permissions = channel.permissionsFor(interaction.guild.members.me);
-      if (
-        !permissions?.has([
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-        ])
-      ) {
-        await interaction.reply({
-          content: "I need View Channel and Send Messages in the welcome channel.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-    }
-
-    await interaction.client.modules.db.setWelcomeChannel(
-      interaction.guildId,
-      channel?.id || null,
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId("welcome-settings:channels-modal")
+        .setTitle("Welcome channels")
+        .addLabelComponents(
+          new LabelBuilder()
+            .setLabel("Welcome and leave message channels")
+            .setDescription("Clear every selection to disable these messages.")
+            .setChannelSelectMenuComponent(channelSelect),
+        ),
     );
-
-    await interaction.reply({
-      content: channel
-        ? `Welcome messages will be sent in ${channel}.`
-        : "Welcome messages have been disabled.",
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: { parse: [] },
-    });
   },
 };

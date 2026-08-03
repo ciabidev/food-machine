@@ -7,16 +7,8 @@ const {
   ThumbnailBuilder,
 } = require("discord.js");
 
-function formatOrdinal(number) {
-  const lastTwoDigits = number % 100;
-
-  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) return `${number}th`;
-
-  return `${number}${{ 1: "st", 2: "nd", 3: "rd" }[number % 10] || "th"}`;
-}
-
 module.exports = {
-  name: Events.GuildMemberAdd,
+  name: Events.GuildMemberRemove,
   async execute(member) {
     const settings = await member.client.modules.db.getSettings(member.guild.id);
     const channels = settings.welcome_channel_ids
@@ -25,7 +17,6 @@ module.exports = {
 
     if (channels.length === 0) return;
 
-    const joinPosition = formatOrdinal(member.guild.memberCount);
     const components = [
       new ContainerBuilder().addSectionComponents(
         new SectionBuilder()
@@ -34,20 +25,16 @@ module.exports = {
           )
           .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
-              `### Welcome <@${member.id}> to ${member.guild.name}!\n-# You are the ${joinPosition} user to join.`,
+              `### Until next time, <@${member.id}>!\n-# <@${member.id}> has left the server. We now have ${member.guild.memberCount} members.`,
             ),
           ),
       ),
     ];
 
-    await Promise.all(channels.map(async (channel) => {
-      const welcomeMessage = await channel.send({
-        components,
-        flags: MessageFlags.IsComponentsV2,
-        allowedMentions: { users: [member.id] },
-      });
-
-      await welcomeMessage.react("👋");
-    }));
+    await Promise.all(channels.map((channel) => channel.send({
+      components,
+      flags: MessageFlags.IsComponentsV2,
+      allowedMentions: { parse: [] },
+    })));
   },
 };

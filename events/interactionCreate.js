@@ -13,6 +13,7 @@ const {
 const { issuesUrl } = require("#config");
 
 const LEVEL_SETTINGS_PREFIX = "level-settings:";
+const WELCOME_SETTINGS_PREFIX = "welcome-settings:";
 
 async function replyWithError(interaction, error) {
   console.error(error);
@@ -34,6 +35,60 @@ module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
+
+    if (interaction.customId?.startsWith(WELCOME_SETTINGS_PREFIX)) {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to change the welcome channels.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (!interaction.isModalSubmit()) return;
+
+        const selectedChannels = interaction.fields.getSelectedChannels("welcome-settings:channels");
+        const channels = selectedChannels ? [...selectedChannels.values()] : [];
+        const inaccessibleChannel = channels.find((channel) => {
+          const permissions = channel.permissionsFor(interaction.guild.members.me);
+          return !permissions?.has([
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AddReactions,
+          ]);
+        });
+
+        if (inaccessibleChannel) {
+          await interaction.reply({
+            content: `I need View Channel, Send Messages, Read Message History, and Add Reactions in ${inaccessibleChannel}.`,
+            flags: MessageFlags.Ephemeral,
+            allowedMentions: { parse: [] },
+          });
+          return;
+        }
+
+        await interaction.client.modules.db.setWelcomeChannels(
+          interaction.guildId,
+          channels.map((channel) => channel.id),
+        );
+
+        await interaction.reply({
+          content: channels.length
+            ? `Welcome and leave messages will be sent in ${channels.join(", ")}.`
+            : "Welcome and leave messages have been disabled.",
+          flags: MessageFlags.Ephemeral,
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
 
     if (interaction.customId?.startsWith(LEVEL_SETTINGS_PREFIX)) {
       try {
