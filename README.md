@@ -1,6 +1,6 @@
 
-<center><img src="./assets/fdmtiny.png" width=200 height=200></center>
-<b><center>economy • leveling • user utility • fun</center></b>
+<p align="center"><img src="./assets/fdmtiny.png" width=200 height=200></p>
+<p align="center"><b>economy • leveling • user utility • fun</b></p>
 
 <center>custom bot for ciabi server</center>
 
