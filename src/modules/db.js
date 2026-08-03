@@ -58,6 +58,7 @@ async function getSettings(guildId) {
 
   return {
     _id: String(guildId),
+    welcome_channel_id: null,
     ...document,
     leveling: {
       ...DEFAULT_LEVELING_SETTINGS,
@@ -115,6 +116,14 @@ async function setLevelingEnabled(guildId, enabled) {
 
   return updateGuildSettings(guildId, {
     $set: { "leveling.enabled": enabled },
+  });
+}
+
+async function setWelcomeChannel(guildId, channelId) {
+  return updateGuildSettings(guildId, {
+    $set: {
+      welcome_channel_id: channelId ? String(channelId) : null,
+    },
   });
 }
 
@@ -223,6 +232,7 @@ module.exports = {
   getLevelProfile,
   getLevelRank,
   setLevelProfile,
+  setWelcomeChannel,
   setLevelingEnabled,
   setLevelingXpRange,
   setLevelingCooldown,
