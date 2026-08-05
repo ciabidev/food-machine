@@ -14,6 +14,11 @@ const DEFAULT_LEVELING_SETTINGS = Object.freeze({
   reward_role_ids: {},
 });
 
+const DEFAULT_BUBBLE_SETTINGS = Object.freeze({
+  hub_channel_id: null,
+  inactive_category_id: null,
+});
+
 let client;
 let db;
 let initPromise;
@@ -65,13 +70,18 @@ async function getSettings(guildId) {
       ...DEFAULT_LEVELING_SETTINGS,
       ...document?.leveling,
     },
+    bubble: {
+      ...DEFAULT_BUBBLE_SETTINGS,
+      ...document?.bubble,
+    },
   };
 }
 
 async function getLevelProfile(guildId, userId) {
-  const levelProfiles = db.collection("level_profiles");
-  const levelProfile = await levelProfiles.findOne({ guild_id: guildId, user_id: userId });
-  return levelProfile;
+  return db.collection("level_profiles").findOne({
+    guild_id: String(guildId),
+    user_id: String(userId),
+  });
 }
 
 async function getLevelRank(guildId, xp) {
@@ -84,10 +94,22 @@ async function getLevelRank(guildId, xp) {
 }
 
 async function setLevelProfile(guildId, userId, changes = {}) {
-  const levelProfiles = db.collection("level_profiles");
-  return levelProfiles.updateOne(
-    { guild_id: guildId, user_id: userId },
-    { $set: changes },
+  const normalizedGuildId = String(guildId);
+  const normalizedUserId = String(userId);
+
+  return db.collection("level_profiles").updateOne(
+    {
+      guild_id: normalizedGuildId,
+      user_id: normalizedUserId,
+    },
+    {
+      $set: changes,
+      $setOnInsert: {
+        guild_id: normalizedGuildId,
+        user_id: normalizedUserId,
+        created_at: new Date(),
+      },
+    },
     { upsert: true }
   );
 }
@@ -189,19 +211,104 @@ async function setLevelingRewardRole(guildId, level, roleId) {
     : { $unset: { [path]: "" } });
 }
 
+async function setBubbleHub(guildId, hubChannelId) {
+  return updateGuildSettings(guildId, {
+    $set: {
+      "bubble.hub_channel_id": hubChannelId ?? null,
+    },
+  });
+}
+
+async function setBubbleInactiveCategory(guildId, inactiveCategoryId) {
+  return updateGuildSettings(guildId, {
+    $set: {
+      "bubble.inactive_category_id": inactiveCategoryId ?? null,
+    },
+  });
+}
+
+async function addBubble(guildId, channelId, userId) {
+  const bubbles = db.collection("bubbles");
+  // Save each channel as its own distinct record
+  return bubbles.insertOne({
+    guild_id: guildId,
+    channel_id: String(channelId),
+    host_id: String(userId),
+    created_at: new Date(),
+  });
+}
+
+
+
+async function setBubbleName(guildId, channelId, name) {
+  const bubbles = db.collection("bubbles");
+  return bubbles.updateOne(
+    { guild_id: guildId, channel_id: channelId },
+    { $set: { name } },
+  );
+}
+
+async function setBubbleChannel(guildId, channelId) {
+  const bubbles = db.collection("bubbles");
+  return bubbles.updateOne(
+    { guild_id: guildId, channel_id: channelId },
+    { $set: { channel_id: channelId } },
+  );
+}
+
+async function removeBubble(guildId, channelId) {
+  const bubbles = db.collection("bubbles");
+  // Safely deletes only this specific channel record
+  return bubbles.deleteOne({
+    guild_id: guildId,
+    channel_id: String(channelId),
+  });
+}
+
+async function getBubble(guildId, channelId = null, userId = null) {
+  if (!channelId && !userId) {
+    throw new Error("Either channelId or userId must be provided.");
+  }
+
+  const bubbles = db.collection("bubbles");
+  const conditions = [];
+
+  if (channelId) conditions.push({ channel_id: String(channelId) });
+  if (userId) conditions.push({ host_id: String(userId) });
+
+  const query = {
+    guild_id: guildId,
+    $or: conditions,
+  };
+
+  return await bubbles.findOne(query);
+}
+
+
+async function getBubbles(guildId) {
+  const bubbles = db.collection("bubbles");
+  return bubbles.find({ guild_id: String(guildId) }).toArray();
+}
+
+
 async function awardMessageXp(guildId, userId, xpAmount) {
   if (!Number.isFinite(xpAmount)) {
     throw new TypeError("xpAmount must be a finite number");
   }
 
   const now = new Date();
+  const normalizedGuildId = String(guildId);
+  const normalizedUserId = String(userId);
 
   return db.collection("level_profiles").findOneAndUpdate(
-    { _id: `${guildId}:${userId}` },
+    {
+      guild_id: normalizedGuildId,
+      user_id: normalizedUserId,
+    },
     {
       $setOnInsert: {
-        guild_id: String(guildId),
-        user_id: String(userId),
+        guild_id: normalizedGuildId,
+        user_id: normalizedUserId,
         created_at: now,
       },
       $inc: {
@@ -241,8 +348,15 @@ module.exports = {
   setLevelingXpRange,
   setLevelingCooldown,
   setLevelingChannels,
+  setBubbleName,
   setIgnoredLevelingRoles,
   setLevelingRewardRole,
   awardMessageXp,
   closeDb,
+  addBubble,
+  removeBubble,
+  getBubble,
+  getBubbles,
+  setBubbleHub,
+  setBubbleInactiveCategory,
 };

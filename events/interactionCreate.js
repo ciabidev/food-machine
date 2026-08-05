@@ -1,6 +1,7 @@
 const {
   ChannelSelectMenuBuilder,
   ChannelType,
+  ContainerBuilder,
   Events,
   LabelBuilder,
   MessageFlags,
@@ -9,11 +10,14 @@ const {
   RoleSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
+  TextDisplayBuilder,
 } = require("discord.js");
 const { issuesUrl } = require("#config");
 
 const LEVEL_SETTINGS_PREFIX = "level-settings:";
 const WELCOME_SETTINGS_PREFIX = "welcome-settings:";
+const BUBBLE_SETTINGS_MODAL_ID = "bubble-settings:modal";
+const POP_BUBBLE_ACCENT_COLOR = 0xF87171;
 
 async function replyWithError(interaction, error) {
   console.error(error);
@@ -35,6 +39,171 @@ module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
+
+    if (interaction.customId === "pop-bubbles") {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to pop bubble channels.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (!interaction.isModalSubmit()) return;
+
+        const db = interaction.client.modules.db;
+        const selectedChannelIds = interaction.fields.getStringSelectValues(
+          "pop-bubble-channels",
+        );
+        const reason = interaction.fields
+          .getTextInputValue("pop-bubbles-reason")
+          .trim();
+
+        if (!reason) {
+          await interaction.reply({
+            content: "A reason is required to pop bubble channels.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const bubbleRecords = await db.getBubbles(interaction.guildId);
+        const bubbles = bubbleRecords.map((bubble) => {
+          const storedChannelId = Array.isArray(bubble.channel_id)
+            ? bubble.channel_id[0]
+            : bubble.channel_id;
+          const channelId = String(storedChannelId).match(/^<#(\d+)>$/)?.[1]
+            || String(storedChannelId);
+          return { record: bubble, channelId };
+        });
+        const bubblesToDelete = selectedChannelIds.length
+          ? bubbles.filter((bubble) => selectedChannelIds.includes(bubble.channelId))
+          : bubbles;
+        let deletedCount = 0;
+        let failedCount = 0;
+        let notificationFailedCount = 0;
+
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        for (const bubble of bubblesToDelete) {
+          const channel = await interaction.guild.channels
+            .fetch(bubble.channelId)
+            .catch(() => null);
+
+          if (channel && !await channel.delete(`Bubble popped by ${interaction.user.tag}: ${reason}`).catch(() => null)) {
+            failedCount += 1;
+            continue;
+          }
+
+          deletedCount += 1;
+          const bubbleName = bubble.record.name || channel?.name || "Your bubble";
+          const bubbleHost = await interaction.client.users
+            .fetch(String(bubble.record.host_id))
+            .catch(() => null);
+
+          if (
+            !bubbleHost
+            || !await bubbleHost.send({
+              components: [
+                new ContainerBuilder()
+                  .setAccentColor(POP_BUBBLE_ACCENT_COLOR)
+                  .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(
+                      [
+                        "### Bubble popped",
+                        `**Bubble:** ${bubbleName}`,
+                        `**Reason:** ${reason}`,
+                      ].join("\n"),
+                    ),
+                  ),
+              ],
+              flags: MessageFlags.IsComponentsV2,
+              allowedMentions: { parse: [] },
+            }).then(() => true).catch(() => false)
+          ) {
+            notificationFailedCount += 1;
+          }
+
+          await db.removeBubble(interaction.guildId, bubble.channelId);
+        }
+
+        const result = [
+          `Popped ${deletedCount} bubble channel(s).`,
+          `**Reason:** ${reason}`,
+        ];
+        if (failedCount) result.push(`-# Failed to delete ${failedCount}.`);
+        if (notificationFailedCount) {
+          result.push(`Could not notify ${notificationFailedCount} host(s).`);
+        }
+
+        await interaction.editReply({
+          components: [
+            new ContainerBuilder()
+              .setAccentColor(POP_BUBBLE_ACCENT_COLOR)
+              .addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                  ["### Bubble pop complete", ...result].join("\n"),
+                ),
+              ),
+          ],
+          flags: MessageFlags.IsComponentsV2,
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
+
+    if (interaction.customId === BUBBLE_SETTINGS_MODAL_ID) {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to change bubble settings.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (!interaction.isModalSubmit()) return;
+
+        const hub = interaction.fields
+          .getSelectedChannels("bubble-hub-channel")
+          ?.first();
+        const inactiveCategory = interaction.fields
+          .getSelectedChannels("bubble-inactive-category")
+          ?.first();
+
+        await interaction.client.modules.db.setBubbleHub(
+          interaction.guildId,
+          hub?.id || null,
+        );
+        await interaction.client.modules.db.setBubbleInactiveCategory(
+          interaction.guildId,
+          inactiveCategory?.id || null,
+        );
+
+        await interaction.reply({
+          content: [
+            "🫧 **Bubble settings saved**",
+            `Creation hub: ${hub || "Disabled"}`,
+            `Inactive category: ${inactiveCategory || "Not set"}`,
+          ].join("\n"),
+          flags: MessageFlags.Ephemeral,
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
 
     if (interaction.customId?.startsWith(WELCOME_SETTINGS_PREFIX)) {
       try {
