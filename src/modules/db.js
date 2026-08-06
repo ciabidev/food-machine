@@ -36,6 +36,22 @@ async function initDb() {
     initPromise = (async () => {
       await client.connect();
       db = client.db(dbName);
+      await db.collection("bubbles").updateMany(
+        { user_limit: { $exists: false } },
+        { $set: { user_limit: 0 } },
+      );
+      await db.collection("bubbles").updateMany(
+        { locked: { $exists: false } },
+        { $set: { locked: false } },
+      );
+      await db.collection("bubbles").updateMany(
+        { hidden: { $exists: false } },
+        { $set: { hidden: false } },
+      );
+      await db.collection("bubbles").createIndex(
+        { guild_id: 1, host_id: 1 },
+        { unique: true },
+      );
       return db;
     })().catch(async (error) => {
       await client.close();
@@ -227,41 +243,95 @@ async function setBubbleInactiveCategory(guildId, inactiveCategoryId) {
   });
 }
 
-async function addBubble(guildId, channelId, userId) {
-  const bubbles = db.collection("bubbles");
-  // Save each channel as its own distinct record
-  return bubbles.insertOne({
-    guild_id: guildId,
-    channel_id: String(channelId),
+async function addBubble(guildId, channelId, userId, name) {
+  const now = new Date();
+  return db.collection("bubbles").updateOne(
+    {
+      guild_id: String(guildId),
+      host_id: String(userId),
+    },
+    {
+      $set: {
+        channel_id: String(channelId),
+        updated_at: now,
+      },
+      $setOnInsert: {
+        guild_id: String(guildId),
+        host_id: String(userId),
+        name,
+        user_limit: 0,
+        locked: false,
+        hidden: false,
+        created_at: now,
+      },
+    },
+    { upsert: true },
+  );
+}
+
+async function setBubbleName(guildId, userId, name) {
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: { name, updated_at: new Date() } },
+  );
+}
+
+async function setBubbleUserLimit(guildId, userId, userLimit) {
+  if (!Number.isInteger(userLimit) || userLimit < 0 || userLimit > 99) {
+    throw new RangeError("Bubble user limit must be between 0 and 99.");
+  }
+
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: { user_limit: userLimit, updated_at: new Date() } },
+  );
+}
+
+async function setBubbleChannel(guildId, userId, channelId) {
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    {
+      $set: {
+        channel_id: channelId ? String(channelId) : null,
+        updated_at: new Date(),
+      },
+    },
+  );
+}
+
+async function setBubbleLocked(guildId, userId, locked) {
+  if (typeof locked !== "boolean") {
+    throw new TypeError("locked must be a boolean.");
+  }
+
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: { locked, updated_at: new Date() } },
+  );
+}
+
+async function setBubbleHidden(guildId, userId, hidden) {
+  if (typeof hidden !== "boolean") {
+    throw new TypeError("hidden must be a boolean.");
+  }
+
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: { hidden, updated_at: new Date() } },
+  );
+}
+
+async function clearBubbleChannel(guildId, channelId) {
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), channel_id: String(channelId) },
+    { $set: { channel_id: null, updated_at: new Date() } },
+  );
+}
+
+async function removeBubble(guildId, userId) {
+  return db.collection("bubbles").deleteOne({
+    guild_id: String(guildId),
     host_id: String(userId),
-    created_at: new Date(),
-  });
-}
-
-
-
-async function setBubbleName(guildId, channelId, name) {
-  const bubbles = db.collection("bubbles");
-  return bubbles.updateOne(
-    { guild_id: guildId, channel_id: channelId },
-    { $set: { name } },
-  );
-}
-
-async function setBubbleChannel(guildId, channelId) {
-  const bubbles = db.collection("bubbles");
-  return bubbles.updateOne(
-    { guild_id: guildId, channel_id: channelId },
-    { $set: { channel_id: channelId } },
-  );
-}
-
-async function removeBubble(guildId, channelId) {
-  const bubbles = db.collection("bubbles");
-  // Safely deletes only this specific channel record
-  return bubbles.deleteOne({
-    guild_id: guildId,
-    channel_id: String(channelId),
   });
 }
 
@@ -277,7 +347,7 @@ async function getBubble(guildId, channelId = null, userId = null) {
   if (userId) conditions.push({ host_id: String(userId) });
 
   const query = {
-    guild_id: guildId,
+    guild_id: String(guildId),
     $or: conditions,
   };
 
@@ -349,6 +419,10 @@ module.exports = {
   setLevelingCooldown,
   setLevelingChannels,
   setBubbleName,
+  setBubbleUserLimit,
+  setBubbleChannel,
+  setBubbleHidden,
+  clearBubbleChannel,
   setIgnoredLevelingRoles,
   setLevelingRewardRole,
   awardMessageXp,
@@ -358,5 +432,6 @@ module.exports = {
   getBubble,
   getBubbles,
   setBubbleHub,
+  setBubbleLocked,
   setBubbleInactiveCategory,
 };

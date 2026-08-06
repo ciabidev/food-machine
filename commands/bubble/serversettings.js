@@ -10,7 +10,7 @@ const {
 
 module.exports = {
   data: new SlashCommandSubcommandBuilder()
-    .setName("settings")
+    .setName("serversettings")
     .setDescription("[Admin] Configure temporary bubble channels"),
 
   async execute(interaction) {
@@ -24,13 +24,13 @@ module.exports = {
 
     const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
     const hub = new ChannelSelectMenuBuilder()
-      .setCustomId("bubble-hub-channel")
+      .setCustomId("bubble:admin:settings:hub")
       .setChannelTypes(ChannelType.GuildVoice)
       .setMinValues(0)
       .setMaxValues(1)
       .setRequired(false);
     const inactiveCategory = new ChannelSelectMenuBuilder()
-      .setCustomId("bubble-inactive-category")
+      .setCustomId("bubble:admin:settings:inactive-category")
       .setChannelTypes(ChannelType.GuildCategory)
       .setMinValues(0)
       .setMaxValues(1)
@@ -52,7 +52,7 @@ module.exports = {
 
     await interaction.showModal(
       new ModalBuilder()
-        .setCustomId("bubble-settings:modal")
+        .setCustomId("bubble:admin:settings")
         .setTitle("Bubble settings")
         .addLabelComponents(
           new LabelBuilder()

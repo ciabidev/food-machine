@@ -12,12 +12,12 @@ const {
 module.exports = {
     data: new SlashCommandSubcommandBuilder()
         .setName("popbubbles")
-        .setDescription("[Admin] Delete temporary bubble channels"),
+        .setDescription("[Admin] Permanently delete bubbles"),
 
     async execute(interaction) {
         if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
             await interaction.reply({
-                content: "You need Manage Server to pop bubble channels.",
+                content: "You need Manage Server to pop bubbles.",
                 flags: MessageFlags.Ephemeral,
             });
             return;
@@ -26,38 +26,37 @@ module.exports = {
         const bubbleRecords = await interaction.client.modules.db.getBubbles(
             interaction.guildId,
         );
+        const settings = await interaction.client.modules.db.getSettings(
+            interaction.guildId,
+        );
 
         if (bubbleRecords.length === 0) {
             await interaction.reply({
-                content: "There are no bubble channels to pop.",
+                content: "There are no bubbles to pop.",
                 flags: MessageFlags.Ephemeral,
             });
             return;
         }
 
-        const bubbleChannels = bubbleRecords.map((bubble) => {
-            const storedChannelId = Array.isArray(bubble.channel_id)
-                ? bubble.channel_id[0]
-                : bubble.channel_id;
-            const channelId = String(storedChannelId).match(/^<#(\d+)>$/)?.[1]
-                || String(storedChannelId);
-            return interaction.guild.channels.cache.get(channelId);
-        }).filter(Boolean).slice(0, 25);
+        const options = bubbleRecords.slice(0, 25).map((bubble) => {
+            const channelId = bubble.channel_id ? String(bubble.channel_id) : null;
+            const channel = channelId
+                ? interaction.guild.channels.cache.get(channelId)
+                : null;
 
-        if (bubbleChannels.length === 0) {
-            await interaction.reply({
-                content: "There are no bubble channels to pop.",
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-
-        const options = bubbleChannels.map((channel) => ({
-            label: channel.name.slice(0, 100),
-            value: channel.id,
-        }));
-        const channelSelect = new StringSelectMenuBuilder()
-            .setCustomId("pop-bubble-channels")
+            return {
+                label: (bubble.name || channel?.name || `Bubble by ${bubble.host_id}`).slice(0, 100),
+                description: channel && (
+                    !settings.bubble.inactive_category_id
+                    || channel.parentId !== settings.bubble.inactive_category_id
+                )
+                    ? "Active channel"
+                    : "Inactive bubble",
+                value: String(bubble.host_id),
+            };
+        });
+        const bubbleSelect = new StringSelectMenuBuilder()
+            .setCustomId("bubble:admin:pop:bubbles")
             .setPlaceholder("Select bubbles to pop")
             .setMinValues(0)
             .setMaxValues(options.length)
@@ -66,24 +65,24 @@ module.exports = {
 
         await interaction.showModal(
             new ModalBuilder()
-                .setCustomId("pop-bubbles")
-                .setTitle("Pop bubble channels")
+                .setCustomId("bubble:admin:pop")
+                .setTitle("Pop bubbles")
                 .addLabelComponents(
                     new LabelBuilder()
                         .setLabel("Reason")
                         .setDescription("This will be shown to each bubble host.")
                         .setTextInputComponent(
                             new TextInputBuilder()
-                                .setCustomId("pop-bubbles-reason")
+                                .setCustomId("bubble:admin:pop:reason")
                                 .setStyle(TextInputStyle.Paragraph)
                                 .setMaxLength(400)
                                 .setPlaceholder("Why are these bubbles being popped?")
                                 .setRequired(true),
                         ),
                     new LabelBuilder()
-                        .setLabel("Bubble channels to delete")
-                        .setDescription("Select nothing to delete every bubble channel.")
-                        .setStringSelectMenuComponent(channelSelect),
+                        .setLabel("Bubbles to delete")
+                        .setDescription("Select nothing to permanently delete every bubble.")
+                        .setStringSelectMenuComponent(bubbleSelect),
                 ),
         );
     },
