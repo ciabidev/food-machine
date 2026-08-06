@@ -11,6 +11,10 @@ const {
   TextInputBuilder,
   TextInputStyle,
   TextDisplayBuilder,
+  UserSelectMenuBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } = require("discord.js");
 const { issuesUrl } = require("#config");
 
@@ -70,7 +74,9 @@ module.exports = {
           let failedCount = 0;
           let notificationFailedCount = 0;
 
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          await interaction.deferReply({
+            flags: MessageFlags.Ephemeral,
+          });
 
           for (const bubble of bubblesToDelete) {
             const channelId = bubble.channel_id ? String(bubble.channel_id) : null;
@@ -131,6 +137,7 @@ module.exports = {
           }
 
           await interaction.editReply({
+            content: null,
             components: [
               new ContainerBuilder()
                 .setAccentColor(0xf87171)
@@ -168,16 +175,17 @@ module.exports = {
           const inactiveCategory = interaction.fields
             .getSelectedChannels("bubble:admin:settings:inactive-category")
             ?.first();
-          const inactiveLimitInput = interaction.fields
-            .getTextInputValue("inactive-limit")
-            .trim();
+          const inactiveLimitInput = interaction.fields.getTextInputValue("inactive-limit").trim();
           const inactiveLimit = inactiveLimitInput ? Number(inactiveLimitInput) : 0;
+          const anchoredLimitInput = interaction.fields.getTextInputValue("anchored-limit").trim();
+          const anchoredLimit = anchoredLimitInput ? Number(anchoredLimitInput) : 0;
+          const channelPrefix = interaction.fields.getTextInputValue("channel-prefix").trim();
 
           if (
-            (inactiveLimitInput && !/^\d+$/.test(inactiveLimitInput))
-            || !Number.isInteger(inactiveLimit)
-            || inactiveLimit < 0
-            || inactiveLimit > 99
+            (inactiveLimitInput && !/^\d+$/.test(inactiveLimitInput)) ||
+            !Number.isInteger(inactiveLimit) ||
+            inactiveLimit < 0 ||
+            inactiveLimit > 99
           ) {
             await interaction.reply({
               content: "Inactive channel limit must be a whole number from 0 to 99.",
@@ -185,6 +193,20 @@ module.exports = {
             });
             return;
           }
+          if (
+            (anchoredLimitInput && !/^\d+$/.test(anchoredLimitInput)) ||
+            !Number.isInteger(anchoredLimit) ||
+            anchoredLimit < 0 ||
+            anchoredLimit > 99
+          ) {
+            await interaction.reply({
+              content: "Anchored channel limit must be a whole number from 0 to 99.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
           await interaction.client.modules.db.setBubbleHub(interaction.guildId, hub?.id || null);
           await interaction.client.modules.db.setBubbleInactiveCategory(
@@ -195,35 +217,102 @@ module.exports = {
             interaction.guildId,
             inactiveLimit,
           );
+          await interaction.client.modules.db.setBubbleAnchoredLimit(
+            interaction.guildId,
+            anchoredLimit,
+          );
+          await interaction.client.modules.db.setBubbleChannelPrefix(
+            interaction.guildId,
+            channelPrefix,
+          );
 
-          const { evictedCount } = await interaction.client.modules
-            .enforceInactiveBubbleLimit(
-              interaction.client,
-              interaction.guild,
-              inactiveLimit,
+          const anchoredBubbles = await interaction.client.modules.db.getAnchoredBubbles(
+            interaction.guildId,
+          );
+          const removedAnchors = anchoredLimit
+            ? anchoredBubbles.slice(anchoredLimit)
+            : anchoredBubbles;
+          for (const anchoredBubble of removedAnchors) {
+            await interaction.client.modules.db.setBubbleAnchored(
+              interaction.guildId,
+              anchoredBubble.host_id,
+              false,
             );
+
+            const anchoredChannel = anchoredBubble.channel_id
+              ? interaction.guild.channels.cache.get(anchoredBubble.channel_id) ||
+                (await interaction.guild.channels
+                  .fetch(anchoredBubble.channel_id)
+                  .catch(() => null))
+              : null;
+            if (anchoredChannel && anchoredChannel.members.size === 0) {
+              if (inactiveCategory?.type === ChannelType.GuildCategory) {
+                await anchoredChannel.setParent(inactiveCategory, { lockPermissions: true });
+                await interaction.client.modules.db.setBubbleInactiveSince(
+                  interaction.guildId,
+                  anchoredBubble.host_id,
+                  new Date(),
+                );
+              } else {
+                await anchoredChannel.delete("Anchoring limit was lowered");
+                await interaction.client.modules.db.clearBubbleChannel(
+                  interaction.guildId,
+                  anchoredChannel.id,
+                );
+              }
+            }
+
+            const owner = await interaction.client.users
+              .fetch(anchoredBubble.host_id)
+              .catch(() => null);
+            await owner
+              ?.send({
+                components: [
+                  new ContainerBuilder()
+                    .setAccentColor(0xf59e0b)
+                    .addTextDisplayComponents(
+                      new TextDisplayBuilder().setContent(
+                        `## Bubble Unanchored\nYour bubble in **${interaction.guild.name}** was unanchored because the server's Anchoring limit was lowered.`,
+                      ),
+                    ),
+                ],
+                flags: MessageFlags.IsComponentsV2,
+              })
+              .catch(() => null);
+          }
+
+          const { evictedCount } = await interaction.client.modules.enforceInactiveBubbleLimit(
+            interaction.client,
+            interaction.guild,
+            inactiveLimit,
+          );
 
           const savedSettings = [
             "# Bubble Settings Saved",
             `> **Creation hub »** ${hub || "Disabled"}`,
             `> **Inactive category »** ${inactiveCategory || "Not set"}`,
             `> **Inactive channel limit »** ${inactiveLimit || "No limit"}`,
+            `> **Anchored channel limit »** ${anchoredLimit || "Disabled"}`,
+            `> **Bubble channel prefix »** ${channelPrefix ? `\`${channelPrefix}\`` : "None"}`,
+            "-# Prefix changes apply when a bubble channel is created or renamed.",
           ];
+          if (removedAnchors.length) {
+            savedSettings.push(`-# Unanchored ${removedAnchors.length} excess bubble(s).`);
+          }
           if (evictedCount) {
             savedSettings.push(`-# Removed ${evictedCount} excess inactive channel(s).`);
           }
 
-          await interaction.reply({
+          await interaction.editReply({
+            content: null,
             components: [
               new ContainerBuilder()
                 .setAccentColor(0x5865f2)
                 .addTextDisplayComponents(
-                  new TextDisplayBuilder().setContent(
-                    savedSettings.join("\n"),
-                  ),
+                  new TextDisplayBuilder().setContent(savedSettings.join("\n")),
                 ),
             ],
-            flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+            flags: MessageFlags.IsComponentsV2,
             allowedMentions: { parse: [] },
           });
         } catch (error) {
@@ -554,12 +643,19 @@ module.exports = {
     }
 
     if (interaction.customId?.startsWith("bubble:user:")) {
-      const action = interaction.customId.split(":")[2];
-      const bubble = await db.getBubble(interaction.guildId, null, interaction.user.id);
+      const customIdParts = interaction.customId.split(":");
+      const action = customIdParts[2];
+      const bubbleOwnerId = action === "info-update"
+        ? customIdParts[3]
+        : interaction.user.id;
+
+      const bubble = await db.getBubble(interaction.guildId, null, bubbleOwnerId);
 
       if (!bubble) {
         await interaction.reply({
-          content: "You don't own a bubble anymore. Please recreate one.",
+          content: action === "info-update"
+            ? "This bubble no longer exists."
+            : "You don't own a bubble anymore. Please recreate one.",
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -579,35 +675,93 @@ module.exports = {
       if (interaction.isButton()) {
         try {
           switch (action) {
-            case "info": {
-              const locked = bubble.locked ?? false;
-              const hidden = bubble.hidden ?? false;
-              const active =
-                channel &&
-                (!settings.bubble.inactive_category_id ||
-                  channel.parentId !== settings.bubble.inactive_category_id);
-              await interaction.reply({
-                components: [
-                  new ContainerBuilder()
-                    .setAccentColor(0x5865f2)
-                    .addTextDisplayComponents(
-                      new TextDisplayBuilder().setContent(
-                        [
-                          "# Bubble Info",
-                          `> **Name »** \`${bubble.name || channel?.name || `${interaction.user.username}'s Bubble`}\``,
-                          `> **Status »** \`${active ? "Active" : "Inactive"}\``,
-                          `> **Channel »** ${channel ? `<#${channel.id}>` : "`Not currently created`"}`,
-                          `> **Members »** \`${channel?.members.size || 0}\``,
-                          `> **User limit »** \`${userLimit || "Unlimited"}\``,
-                          `> **Locked »** \`${locked ? "Yes" : "No"}\``,
-                          `> **Hidden »** \`${hidden ? "Yes" : "No"}\``,
-                        ].join("\n"),
+            case "info":
+            case "info-update": {
+              const components = interaction.client.modules.bubbleInfo(
+                bubble,
+                settings,
+                channel,
+              );
+
+              if (action === "info-update") {
+                await interaction.update({
+                  components,
+                  allowedMentions: { parse: [] },
+                });
+              } else {
+                await interaction.reply({
+                  components,
+                  flags: MessageFlags.IsComponentsV2,
+                  allowedMentions: { parse: [] },
+                });
+              }
+              break;
+            }
+            case "trusted": {
+              const trustedUsers = new UserSelectMenuBuilder()
+                .setCustomId("trusted-users")
+                .setMinValues(0)
+                .setMaxValues(25)
+                .setRequired(false);
+              if (bubble.trusted_user_ids?.length) {
+                const defaults = bubble.trusted_user_ids.filter((userId) =>
+                  interaction.guild.members.cache.has(userId));
+                if (defaults.length) trustedUsers.setDefaultUsers(...defaults);
+              }
+              await interaction.showModal(
+                new ModalBuilder()
+                  .setTitle("Manage trusted users")
+                  .setCustomId("bubble:user:trusted")
+                  .addLabelComponents(
+                    new LabelBuilder()
+                      .setLabel("Trusted users")
+                      .setDescription("Trusted users can see and join locked or hidden bubbles.")
+                      .setUserSelectMenuComponent(trustedUsers),
+                  ),
+              );
+              break;
+            }
+            case "banned": {
+              const bannedUsers = new UserSelectMenuBuilder()
+                .setCustomId("banned-users")
+                .setMinValues(0)
+                .setMaxValues(25)
+                .setRequired(false);
+              if (bubble.banned_user_ids?.length) {
+                const defaults = bubble.banned_user_ids.filter((userId) =>
+                  interaction.guild.members.cache.has(userId));
+                if (defaults.length) bannedUsers.setDefaultUsers(...defaults);
+              }
+              await interaction.showModal(
+                new ModalBuilder()
+                  .setTitle("Manage banned users")
+                  .setCustomId("bubble:user:banned")
+                  .addLabelComponents(
+                    new LabelBuilder()
+                      .setLabel("Banned users")
+                      .setDescription("Banned users cannot see or join your bubble.")
+                      .setUserSelectMenuComponent(bannedUsers),
+                  ),
+              );
+              break;
+            }
+            case "kick": {
+              await interaction.showModal(
+                new ModalBuilder()
+                  .setTitle("Kick user")
+                  .setCustomId("bubble:user:kick")
+                  .addLabelComponents(
+                    new LabelBuilder()
+                      .setLabel("User to disconnect")
+                      .setUserSelectMenuComponent(
+                        new UserSelectMenuBuilder()
+                          .setCustomId("kick-user")
+                          .setMinValues(1)
+                          .setMaxValues(1)
+                          .setRequired(true),
                       ),
-                    ),
-                ],
-                flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
-                allowedMentions: { parse: [] },
-              });
+                  ),
+              );
               break;
             }
             case "rename": {
@@ -653,25 +807,15 @@ module.exports = {
             case "togglelock": {
               await interaction.deferUpdate();
               const updatedLocked = !bubble.locked;
-              await db.setBubbleLocked(
-                interaction.guildId,
-                interaction.user.id,
-                updatedLocked,
-              );
+              await db.setBubbleLocked(interaction.guildId, interaction.user.id, updatedLocked);
 
               if (channel) {
-                await channel.permissionOverwrites.edit(
-                  interaction.guild.roles.everyone,
-                  {
-                    Connect: updatedLocked ? false : null,
-                  },
-                );
-                await channel.permissionOverwrites.edit(
-                  interaction.user.id,
-                  {
-                    Connect: updatedLocked ? true : null,
-                  },
-                );
+                await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+                  Connect: updatedLocked ? false : null,
+                });
+                await channel.permissionOverwrites.edit(interaction.user.id, {
+                  Connect: updatedLocked ? true : null,
+                });
               }
 
               const components =
@@ -686,37 +830,135 @@ module.exports = {
             case "togglevisibility": {
               await interaction.deferUpdate();
               const updatedHidden = !bubble.hidden;
-              await db.setBubbleHidden(
-                interaction.guildId,
-                interaction.user.id,
-                updatedHidden,
-              );
+              await db.setBubbleHidden(interaction.guildId, interaction.user.id, updatedHidden);
 
               if (channel) {
-                await channel.permissionOverwrites.edit(
-                  interaction.guild.roles.everyone,
-                  {
-                    ViewChannel: updatedHidden ? false : null,
-                  },
-                );
-                await channel.permissionOverwrites.edit(
-                  interaction.user.id,
-                  {
-                    ViewChannel: updatedHidden ? true : null,
-                  },
-                );
+                await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
+                  ViewChannel: updatedHidden ? false : null,
+                });
+                await channel.permissionOverwrites.edit(interaction.user.id, {
+                  ViewChannel: updatedHidden ? true : null,
+                });
               }
 
               const components =
-                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(
-                  interaction,
-                );
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
 
               await interaction.editReply({
                 components,
                 allowedMentions: { parse: [] },
               });
               break;
+            }
+            case "toggleanchor": {
+              const updatedAnchored = !bubble.anchored;
+              if (updatedAnchored) {
+                const anchoredLimit = settings.bubble.anchored_channel_limit;
+                const anchoredBubbles = await db.getAnchoredBubbles(interaction.guildId);
+                if (!anchoredLimit || anchoredBubbles.length >= anchoredLimit) {
+                  await interaction.reply({
+                    content: anchoredLimit
+                      ? "This server has no Anchor slots available. Please wait until someone unanchors their bubble."
+                      : "Anchoring is disabled on this server.",
+                    flags: MessageFlags.Ephemeral,
+                  });
+                  return;
+                }
+              }
+
+              await interaction.deferUpdate();
+              await db.setBubbleAnchored(interaction.guildId, interaction.user.id, updatedAnchored);
+
+              if (channel && channel.members.size === 0) {
+                if (updatedAnchored) {
+                  const hub = settings.bubble.hub_channel_id
+                    ? interaction.guild.channels.cache.get(settings.bubble.hub_channel_id) ||
+                      (await interaction.guild.channels
+                        .fetch(settings.bubble.hub_channel_id)
+                        .catch(() => null))
+                    : null;
+                  await channel.setParent(hub?.parent || null, { lockPermissions: true });
+                  await db.setBubbleInactiveSince(interaction.guildId, interaction.user.id, null);
+                } else {
+                  const inactiveCategory = settings.bubble.inactive_category_id
+                    ? interaction.guild.channels.cache.get(settings.bubble.inactive_category_id) ||
+                      (await interaction.guild.channels
+                        .fetch(settings.bubble.inactive_category_id)
+                        .catch(() => null))
+                    : null;
+                  if (inactiveCategory?.type === ChannelType.GuildCategory) {
+                    await channel.setParent(inactiveCategory, { lockPermissions: true });
+                    await db.setBubbleInactiveSince(
+                      interaction.guildId,
+                      interaction.user.id,
+                      new Date(),
+                    );
+                    await interaction.client.modules.enforceInactiveBubbleLimit(
+                      interaction.client,
+                      interaction.guild,
+                      settings.bubble.inactive_channel_limit,
+                    );
+                  } else {
+                    await channel.delete("Empty unanchored bubble channel");
+                    await db.clearBubbleChannel(interaction.guildId, channel.id);
+                  }
+                }
+              }
+
+              const components =
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
+              await interaction.editReply({ components, allowedMentions: { parse: [] } });
+              break;
+            }
+            case "pop": {
+              const components = [
+                new ContainerBuilder()
+                  .setAccentColor(16746375)
+                  .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent(
+                      `## Are you sure you want to pop this bubble?\n**${bubble.name}** and it's channel will be *permanently* deleted`,
+                    ),
+                  )
+                  .addActionRowComponents(
+                    new ActionRowBuilder().addComponents(
+                      new ButtonBuilder()
+                        .setStyle(ButtonStyle.Danger)
+                        .setLabel("Confirm")
+                        .setCustomId("bubble:user:pop-confirm"),
+                    ),
+                  ),
+              ];
+              await interaction.reply({
+                components,
+                flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+              });
+              break;
+            }
+            case "pop-confirm": {
+              const components = [
+                new ContainerBuilder()
+                  .setAccentColor(16746375)
+                  .addTextDisplayComponents(
+                    new TextDisplayBuilder().setContent("## Popping bubble..."),
+                  ),
+              ];
+              await interaction.deferUpdate();
+              await interaction.editReply({
+                components,
+                flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+              });
+              await db.removeBubble(interaction.guildId, interaction.user.id);
+              if (channel) {
+                try {
+                  await channel.delete("Popped bubble");
+                } catch (error) {
+                  await interaction.editReply({
+                    content:
+                      "I couldn't delete the bubble channel. Please check my permissions and try again.",
+                    flags: MessageFlags.Ephemeral,
+                  });
+                }
+              }
             }
           }
         } catch (error) {
@@ -730,18 +972,22 @@ module.exports = {
             case "rename": {
               await interaction.deferUpdate();
 
-              const name = interaction.fields.getTextInputValue("new-name").trim();
+              const name = interaction.fields.getTextInputValue("new-name");
 
               await db.setBubbleName(interaction.guildId, interaction.user.id, name);
 
               if (channel) {
-                await channel.setName(name);
+                const channelName = interaction.client.modules.bubbleChannelName(
+                  settings.bubble.channel_prefix,
+                  name,
+                );
+                if (channel.name !== channelName) {
+                  await channel.setName(channelName, "Bubble renamed by owner");
+                }
               }
 
               const components =
-                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(
-                  interaction,
-                );
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
 
               await interaction.editReply({
                 components,
@@ -754,10 +1000,10 @@ module.exports = {
               const updatedUserLimit = Number(userLimitInput);
 
               if (
-                !/^\d+$/.test(userLimitInput)
-                || !Number.isInteger(updatedUserLimit)
-                || updatedUserLimit < 0
-                || updatedUserLimit > 99
+                !/^\d+$/.test(userLimitInput) ||
+                !Number.isInteger(updatedUserLimit) ||
+                updatedUserLimit < 0 ||
+                updatedUserLimit > 99
               ) {
                 await interaction.reply({
                   content: "User limit must be a whole number from 0 to 99.",
@@ -778,9 +1024,7 @@ module.exports = {
               }
 
               const components =
-                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(
-                  interaction,
-                );
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
 
               await interaction.editReply({
                 components,
@@ -788,7 +1032,111 @@ module.exports = {
               });
               break;
             }
+            case "trusted": {
+              const selectedUsers = interaction.fields.getSelectedUsers("trusted-users");
+              const trustedUserIds = selectedUsers
+                ? [...selectedUsers.values()]
+                    .filter((user) => !user.bot && user.id !== interaction.user.id)
+                    .map((user) => user.id)
+                : [];
+              const previousUserIds = [
+                ...(bubble.trusted_user_ids || []),
+                ...(bubble.banned_user_ids || []),
+              ];
 
+              await interaction.deferUpdate();
+              await db.setBubbleTrustedUsers(
+                interaction.guildId,
+                interaction.user.id,
+                trustedUserIds,
+              );
+              const updatedBubble = await db.getBubble(
+                interaction.guildId,
+                null,
+                interaction.user.id,
+              );
+              if (channel) {
+                await interaction.client.modules.applyBubblePermissions(
+                  channel,
+                  updatedBubble,
+                  previousUserIds,
+                );
+              }
+
+              const components =
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
+              await interaction.editReply({ components, allowedMentions: { parse: [] } });
+              break;
+            }
+            case "banned": {
+              const selectedUsers = interaction.fields.getSelectedUsers("banned-users");
+              const bannedUserIds = selectedUsers
+                ? [...selectedUsers.values()]
+                    .filter((user) => !user.bot && user.id !== interaction.user.id)
+                    .map((user) => user.id)
+                : [];
+              const previousUserIds = [
+                ...(bubble.trusted_user_ids || []),
+                ...(bubble.banned_user_ids || []),
+              ];
+
+              await interaction.deferUpdate();
+              await db.setBubbleBannedUsers(
+                interaction.guildId,
+                interaction.user.id,
+                bannedUserIds,
+              );
+              const updatedBubble = await db.getBubble(
+                interaction.guildId,
+                null,
+                interaction.user.id,
+              );
+              if (channel) {
+                await interaction.client.modules.applyBubblePermissions(
+                  channel,
+                  updatedBubble,
+                  previousUserIds,
+                );
+                for (const userId of bannedUserIds) {
+                  const bannedMember = interaction.guild.members.cache.get(userId);
+                  if (bannedMember?.voice.channelId === channel.id) {
+                    await bannedMember.voice.disconnect("Banned by bubble owner");
+                  }
+                }
+              }
+
+              const components =
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
+              await interaction.editReply({ components, allowedMentions: { parse: [] } });
+              break;
+            }
+            case "kick": {
+              const selectedUser = interaction.fields.getSelectedUsers("kick-user", true).first();
+              const member = await interaction.guild.members
+                .fetch(selectedUser.id)
+                .catch(() => null);
+              if (!channel || !member || member.voice.channelId !== channel.id) {
+                await interaction.reply({
+                  content: "That user is not connected to your bubble.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                return;
+              }
+              if (member.id === interaction.user.id) {
+                await interaction.reply({
+                  content: "You cannot kick yourself from your bubble.",
+                  flags: MessageFlags.Ephemeral,
+                });
+                return;
+              }
+
+              await interaction.deferUpdate();
+              await member.voice.disconnect("Kicked by bubble owner");
+              const components =
+                await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
+              await interaction.editReply({ components, allowedMentions: { parse: [] } });
+              break;
+            }
           }
         } catch (error) {
           await replyWithError(interaction, error);

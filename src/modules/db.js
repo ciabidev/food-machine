@@ -18,6 +18,8 @@ const DEFAULT_BUBBLE_SETTINGS = Object.freeze({
   hub_channel_id: null,
   inactive_category_id: null,
   inactive_channel_limit: 0,
+  anchored_channel_limit: 0,
+  channel_prefix: "",
 });
 
 let client;
@@ -52,6 +54,18 @@ async function initDb() {
       await db.collection("bubbles").updateMany(
         { inactive_warning_sent_at: { $exists: false } },
         { $set: { inactive_warning_sent_at: null } },
+      );
+      await db.collection("bubbles").updateMany(
+        { anchored: { $exists: false } },
+        { $set: { anchored: false, anchored_at: null } },
+      );
+      await db.collection("bubbles").updateMany(
+        { trusted_user_ids: { $exists: false } },
+        { $set: { trusted_user_ids: [] } },
+      );
+      await db.collection("bubbles").updateMany(
+        { banned_user_ids: { $exists: false } },
+        { $set: { banned_user_ids: [] } },
       );
       await db.collection("bubbles").createIndex(
         { guild_id: 1, host_id: 1 },
@@ -243,6 +257,7 @@ async function setBubbleHub(guildId, hubChannelId) {
   });
 }
 
+
 async function setBubbleInactiveCategory(guildId, inactiveCategoryId) {
   return updateGuildSettings(guildId, {
     $set: {
@@ -260,6 +275,26 @@ async function setBubbleInactiveLimit(guildId, inactiveLimit) {
     $set: {
       "bubble.inactive_channel_limit": inactiveLimit,
     },
+  });
+}
+
+async function setBubbleAnchoredLimit(guildId, anchoredLimit) {
+  if (!Number.isInteger(anchoredLimit) || anchoredLimit < 0 || anchoredLimit > 99) {
+    throw new RangeError("Anchored channel limit must be between 0 and 99.");
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: { "bubble.anchored_channel_limit": anchoredLimit },
+  });
+}
+
+async function setBubbleChannelPrefix(guildId, channelPrefix) {
+  if (typeof channelPrefix !== "string" || channelPrefix.length > 25) {
+    throw new RangeError("Bubble channel prefix must be 25 characters or fewer.");
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: { "bubble.channel_prefix": channelPrefix },
   });
 }
 
@@ -283,6 +318,10 @@ async function addBubble(guildId, channelId, userId, name) {
         user_limit: 0,
         locked: false,
         hidden: false,
+        anchored: false,
+        anchored_at: null,
+        trusted_user_ids: [],
+        banned_user_ids: [],
         inactive_warning_sent_at: null,
         created_at: now,
       },
@@ -295,6 +334,12 @@ async function setBubbleName(guildId, userId, name) {
   return db.collection("bubbles").updateOne(
     { guild_id: String(guildId), host_id: String(userId) },
     { $set: { name, updated_at: new Date() } },
+  );
+}
+async function setBubbleGuideMessage(guildId, userId, messageId) {
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: { guide_message_id: messageId, updated_at: new Date() } },
   );
 }
 
@@ -342,6 +387,58 @@ async function setBubbleHidden(guildId, userId, hidden) {
     { guild_id: String(guildId), host_id: String(userId) },
     { $set: { hidden, updated_at: new Date() } },
   );
+}
+
+async function setBubbleAnchored(guildId, userId, anchored) {
+  if (typeof anchored !== "boolean") {
+    throw new TypeError("anchored must be a boolean.");
+  }
+
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    {
+      $set: {
+        anchored,
+        anchored_at: anchored ? new Date() : null,
+        updated_at: new Date(),
+      },
+    },
+  );
+}
+
+async function setBubbleTrustedUsers(guildId, userId, trustedUserIds) {
+  const userIds = [...new Set(trustedUserIds.map(String))].slice(0, 25);
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    {
+      $set: {
+        trusted_user_ids: userIds,
+        updated_at: new Date(),
+      },
+      $pull: { banned_user_ids: { $in: userIds } },
+    },
+  );
+}
+
+async function setBubbleBannedUsers(guildId, userId, bannedUserIds) {
+  const userIds = [...new Set(bannedUserIds.map(String))].slice(0, 25);
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    {
+      $set: {
+        banned_user_ids: userIds,
+        updated_at: new Date(),
+      },
+      $pull: { trusted_user_ids: { $in: userIds } },
+    },
+  );
+}
+
+async function getAnchoredBubbles(guildId) {
+  return db.collection("bubbles")
+    .find({ guild_id: String(guildId), anchored: true })
+    .sort({ anchored_at: 1, created_at: 1 })
+    .toArray();
 }
 
 async function setBubbleInactiveSince(guildId, userId, inactiveSince) {
@@ -500,6 +597,10 @@ module.exports = {
   setBubbleUserLimit,
   setBubbleChannel,
   setBubbleHidden,
+  setBubbleAnchored,
+  setBubbleTrustedUsers,
+  setBubbleBannedUsers,
+  getAnchoredBubbles,
   setBubbleInactiveSince,
   setBubbleInactiveWarning,
   clearOtherBubbleInactiveWarnings,
@@ -517,4 +618,7 @@ module.exports = {
   setBubbleLocked,
   setBubbleInactiveCategory,
   setBubbleInactiveLimit,
+  setBubbleAnchoredLimit,
+  setBubbleChannelPrefix,
+  setBubbleGuideMessage,
 };

@@ -59,6 +59,7 @@ module.exports = {
 
     const locked = bubble.locked ?? false;
     const hidden = bubble.hidden ?? false;
+    const anchored = bubble.anchored ?? false;
     const userLimit = channel?.userLimit ?? bubble.user_limit ?? 0;
     const bubbleName = bubble.name || channel?.name || `${interaction.user.username}'s Bubble`;
     const active = channel && (
@@ -125,6 +126,39 @@ module.exports = {
               hidden ? "Reveal" : "Hide",
               ButtonStyle.Secondary,
               hidden ? "🌥️" : "🌫️",
+            ),
+            buildButton(
+              "bubble:user:toggleanchor",
+              anchored ? "Unanchor" : "Anchor",
+              ButtonStyle.Secondary,
+              "⚓",
+              !anchored && !settings.bubble.anchored_channel_limit,
+            ),
+          ),
+        )
+        .addSeparatorComponents(
+          new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true),
+        )
+        .addActionRowComponents(
+          new ActionRowBuilder().addComponents(
+            buildButton(
+              "bubble:user:trusted",
+              "Manage Trusted Users",
+              ButtonStyle.Secondary,
+              "🤝",
+            ),
+            buildButton(
+              "bubble:user:banned",
+              "Manage Banned Users",
+              ButtonStyle.Secondary,
+              "🚫",
+            ),
+            buildButton(
+              "bubble:user:kick",
+              "Kick User",
+              ButtonStyle.Danger,
+              "🥾",
+              !channel || !channel.members.some((member) => member.id !== interaction.user.id),
             ),
           ),
         ),

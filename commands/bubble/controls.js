@@ -3,7 +3,7 @@ const bubbleControlPanel = require("#modules/bubbleControlPanel");
 
 module.exports = {
   data: new SlashCommandSubcommandBuilder()
-    .setName("manage")
+    .setName("controls")
     .setDescription("Manage your bubble channel"),
 
   async execute(interaction) {

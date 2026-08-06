@@ -8,7 +8,6 @@ const {
   SlashCommandSubcommandBuilder,
   TextInputBuilder,
   TextInputStyle,
-  TextDisplayBuilder,
 } = require("discord.js");
 
 module.exports = {
@@ -44,9 +43,27 @@ module.exports = {
       .setPlaceholder("No limit")
       .setRequired(false)
       .setMaxLength(2);
+    const anchoredLimit = new TextInputBuilder()
+      .setCustomId("anchored-limit")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("Disabled")
+      .setRequired(false)
+      .setMaxLength(2);
+    const channelPrefix = new TextInputBuilder()
+      .setCustomId("channel-prefix")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("No prefix")
+      .setRequired(false)
+      .setMaxLength(25);
 
     if (settings.bubble.inactive_channel_limit) {
       inactiveLimit.setValue(String(settings.bubble.inactive_channel_limit));
+    }
+    if (settings.bubble.anchored_channel_limit) {
+      anchoredLimit.setValue(String(settings.bubble.anchored_channel_limit));
+    }
+    if (settings.bubble.channel_prefix) {
+      channelPrefix.setValue(settings.bubble.channel_prefix);
     }
 
     if (
@@ -80,16 +97,21 @@ module.exports = {
             .setChannelSelectMenuComponent(inactiveCategory),
 
           new LabelBuilder()
-            .setLabel("Inactive Channel Limit")
+            .setLabel("Inactive Channel Limit*")
             .setDescription(
               "Oldest inactive channels are removed first. Leave blank or enter 0 for no limit.",
             )
             .setTextInputComponent(inactiveLimit),
-        )
-        .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            "-# If any bubbles are already past the inactive channel limit, please notify your members before lowering it",
-          ),
+          new LabelBuilder()
+            .setLabel("Anchored Channel Limit")
+            .setDescription(
+              "Users can anchor their bubble to keep it active, even after leaving it. Leave blank to disable.",
+            )
+            .setTextInputComponent(anchoredLimit),
+          new LabelBuilder()
+            .setLabel("Bubble Channel Prefix")
+            .setDescription("Added before every bubble channel name with a space. Leave blank for none.")
+            .setTextInputComponent(channelPrefix),
         ),
     );
   },
