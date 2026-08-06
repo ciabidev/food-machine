@@ -8,6 +8,7 @@ const {
   SlashCommandSubcommandBuilder,
   TextInputBuilder,
   TextInputStyle,
+  TextDisplayBuilder,
 } = require("discord.js");
 
 module.exports = {
