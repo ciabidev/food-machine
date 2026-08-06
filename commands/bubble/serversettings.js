@@ -6,6 +6,8 @@ const {
   ModalBuilder,
   PermissionFlagsBits,
   SlashCommandSubcommandBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
 
 module.exports = {
@@ -35,17 +37,27 @@ module.exports = {
       .setMinValues(0)
       .setMaxValues(1)
       .setRequired(false);
+    const inactiveLimit = new TextInputBuilder()
+      .setCustomId("inactive-limit")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("No limit")
+      .setRequired(false)
+      .setMaxLength(2);
+
+    if (settings.bubble.inactive_channel_limit) {
+      inactiveLimit.setValue(String(settings.bubble.inactive_channel_limit));
+    }
 
     if (
-      settings.bubble.hub_channel_id
-      && interaction.guild.channels.cache.has(settings.bubble.hub_channel_id)
+      settings.bubble.hub_channel_id &&
+      interaction.guild.channels.cache.has(settings.bubble.hub_channel_id)
     ) {
       hub.setDefaultChannels(settings.bubble.hub_channel_id);
     }
 
     if (
-      settings.bubble.inactive_category_id
-      && interaction.guild.channels.cache.has(settings.bubble.inactive_category_id)
+      settings.bubble.inactive_category_id &&
+      interaction.guild.channels.cache.has(settings.bubble.inactive_category_id)
     ) {
       inactiveCategory.setDefaultChannels(settings.bubble.inactive_category_id);
     }
@@ -61,8 +73,22 @@ module.exports = {
             .setChannelSelectMenuComponent(hub),
           new LabelBuilder()
             .setLabel("Inactive category")
-            .setDescription("Bubbles with no members will be moved to this category. (Private category recommended)")
+            .setDescription(
+              "Bubbles with no members will be moved to this category. (Private category recommended)",
+            )
             .setChannelSelectMenuComponent(inactiveCategory),
+
+          new LabelBuilder()
+            .setLabel("Inactive Channel Limit")
+            .setDescription(
+              "Oldest inactive channels are removed first. Leave blank or enter 0 for no limit.",
+            )
+            .setTextInputComponent(inactiveLimit),
+        )
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            "-# If any bubbles are already past the inactive channel limit, please notify your members before lowering it",
+          ),
         ),
     );
   },

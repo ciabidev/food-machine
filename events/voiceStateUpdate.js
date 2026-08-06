@@ -1,4 +1,8 @@
-const { ChannelType, Events, PermissionFlagsBits } = require("discord.js");
+const {
+  ChannelType,
+  Events,
+  PermissionFlagsBits,
+} = require("discord.js");
 
 module.exports = {
   name: Events.VoiceStateUpdate,
@@ -78,6 +82,12 @@ module.exports = {
         if (!bubble?.name) {
           await db.setBubbleName(guildId, host.user.id, bubbleName);
         }
+        await db.setBubbleInactiveSince(guildId, host.user.id, null);
+        await newState.client.modules.enforceInactiveBubbleLimit(
+          newState.client,
+          newState.guild,
+          settings.bubble.inactive_channel_limit,
+        );
 
         await host.voice.setChannel(bubbleChannel.id, "Moved to bubble channel");
       } catch (error) {
@@ -101,10 +111,19 @@ module.exports = {
 
         if (inactiveCategory?.type === ChannelType.GuildCategory) {
           await oldChannel.setParent(inactiveCategory, { lockPermissions: true });
+          await db.setBubbleInactiveSince(guildId, bubble.host_id, new Date());
+          await newState.client.modules.enforceInactiveBubbleLimit(
+            newState.client,
+            newState.guild,
+            settings.bubble.inactive_channel_limit,
+          );
           return;
         }
 
-        if (inactiveCategoryId) {
+        if (
+          inactiveCategoryId
+          && inactiveCategory?.type !== ChannelType.GuildCategory
+        ) {
           await db.setBubbleInactiveCategory(guildId, null);
         }
 

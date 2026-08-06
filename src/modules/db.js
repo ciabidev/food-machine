@@ -17,6 +17,7 @@ const DEFAULT_LEVELING_SETTINGS = Object.freeze({
 const DEFAULT_BUBBLE_SETTINGS = Object.freeze({
   hub_channel_id: null,
   inactive_category_id: null,
+  inactive_channel_limit: 0,
 });
 
 let client;
@@ -48,9 +49,16 @@ async function initDb() {
         { hidden: { $exists: false } },
         { $set: { hidden: false } },
       );
+      await db.collection("bubbles").updateMany(
+        { inactive_warning_sent_at: { $exists: false } },
+        { $set: { inactive_warning_sent_at: null } },
+      );
       await db.collection("bubbles").createIndex(
         { guild_id: 1, host_id: 1 },
         { unique: true },
+      );
+      await db.collection("bubbles").createIndex(
+        { guild_id: 1, inactive_since: 1 },
       );
       return db;
     })().catch(async (error) => {
@@ -243,6 +251,18 @@ async function setBubbleInactiveCategory(guildId, inactiveCategoryId) {
   });
 }
 
+async function setBubbleInactiveLimit(guildId, inactiveLimit) {
+  if (!Number.isInteger(inactiveLimit) || inactiveLimit < 0 || inactiveLimit > 99) {
+    throw new RangeError("Inactive channel limit must be between 0 and 99.");
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: {
+      "bubble.inactive_channel_limit": inactiveLimit,
+    },
+  });
+}
+
 async function addBubble(guildId, channelId, userId, name) {
   const now = new Date();
   return db.collection("bubbles").updateOne(
@@ -253,6 +273,7 @@ async function addBubble(guildId, channelId, userId, name) {
     {
       $set: {
         channel_id: String(channelId),
+        inactive_since: null,
         updated_at: now,
       },
       $setOnInsert: {
@@ -262,6 +283,7 @@ async function addBubble(guildId, channelId, userId, name) {
         user_limit: 0,
         locked: false,
         hidden: false,
+        inactive_warning_sent_at: null,
         created_at: now,
       },
     },
@@ -293,6 +315,7 @@ async function setBubbleChannel(guildId, userId, channelId) {
     {
       $set: {
         channel_id: channelId ? String(channelId) : null,
+        inactive_since: null,
         updated_at: new Date(),
       },
     },
@@ -321,10 +344,66 @@ async function setBubbleHidden(guildId, userId, hidden) {
   );
 }
 
+async function setBubbleInactiveSince(guildId, userId, inactiveSince) {
+  const changes = {
+    inactive_since: inactiveSince || null,
+    updated_at: new Date(),
+  };
+  if (!inactiveSince) changes.inactive_warning_sent_at = null;
+
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    { $set: changes },
+  );
+}
+
+async function setBubbleInactiveWarning(guildId, userId, warningSentAt) {
+  return db.collection("bubbles").updateOne(
+    { guild_id: String(guildId), host_id: String(userId) },
+    {
+      $set: {
+        inactive_warning_sent_at: warningSentAt || null,
+        updated_at: new Date(),
+      },
+    },
+  );
+}
+
+async function clearOtherBubbleInactiveWarnings(guildId, userId = null) {
+  const query = {
+    guild_id: String(guildId),
+    inactive_warning_sent_at: { $type: "date" },
+  };
+  if (userId) query.host_id = { $ne: String(userId) };
+
+  return db.collection("bubbles").updateMany(
+    query,
+    { $set: { inactive_warning_sent_at: null, updated_at: new Date() } },
+  );
+}
+
+async function getInactiveBubbles(guildId) {
+  return db.collection("bubbles")
+    .find({
+      guild_id: String(guildId),
+      channel_id: { $ne: null },
+      inactive_since: { $type: "date" },
+    })
+    .sort({ inactive_since: 1 })
+    .toArray();
+}
+
 async function clearBubbleChannel(guildId, channelId) {
   return db.collection("bubbles").updateOne(
     { guild_id: String(guildId), channel_id: String(channelId) },
-    { $set: { channel_id: null, updated_at: new Date() } },
+    {
+      $set: {
+        channel_id: null,
+        inactive_since: null,
+        inactive_warning_sent_at: null,
+        updated_at: new Date(),
+      },
+    },
   );
 }
 
@@ -359,7 +438,6 @@ async function getBubbles(guildId) {
   const bubbles = db.collection("bubbles");
   return bubbles.find({ guild_id: String(guildId) }).toArray();
 }
-
 
 async function awardMessageXp(guildId, userId, xpAmount) {
   if (!Number.isFinite(xpAmount)) {
@@ -422,6 +500,10 @@ module.exports = {
   setBubbleUserLimit,
   setBubbleChannel,
   setBubbleHidden,
+  setBubbleInactiveSince,
+  setBubbleInactiveWarning,
+  clearOtherBubbleInactiveWarnings,
+  getInactiveBubbles,
   clearBubbleChannel,
   setIgnoredLevelingRoles,
   setLevelingRewardRole,
@@ -434,4 +516,5 @@ module.exports = {
   setBubbleHub,
   setBubbleLocked,
   setBubbleInactiveCategory,
+  setBubbleInactiveLimit,
 };

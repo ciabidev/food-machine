@@ -168,20 +168,62 @@ module.exports = {
           const inactiveCategory = interaction.fields
             .getSelectedChannels("bubble:admin:settings:inactive-category")
             ?.first();
+          const inactiveLimitInput = interaction.fields
+            .getTextInputValue("inactive-limit")
+            .trim();
+          const inactiveLimit = inactiveLimitInput ? Number(inactiveLimitInput) : 0;
+
+          if (
+            (inactiveLimitInput && !/^\d+$/.test(inactiveLimitInput))
+            || !Number.isInteger(inactiveLimit)
+            || inactiveLimit < 0
+            || inactiveLimit > 99
+          ) {
+            await interaction.reply({
+              content: "Inactive channel limit must be a whole number from 0 to 99.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
 
           await interaction.client.modules.db.setBubbleHub(interaction.guildId, hub?.id || null);
           await interaction.client.modules.db.setBubbleInactiveCategory(
             interaction.guildId,
             inactiveCategory?.id || null,
           );
+          await interaction.client.modules.db.setBubbleInactiveLimit(
+            interaction.guildId,
+            inactiveLimit,
+          );
+
+          const { evictedCount } = await interaction.client.modules
+            .enforceInactiveBubbleLimit(
+              interaction.client,
+              interaction.guild,
+              inactiveLimit,
+            );
+
+          const savedSettings = [
+            "# Bubble Settings Saved",
+            `> **Creation hub »** ${hub || "Disabled"}`,
+            `> **Inactive category »** ${inactiveCategory || "Not set"}`,
+            `> **Inactive channel limit »** ${inactiveLimit || "No limit"}`,
+          ];
+          if (evictedCount) {
+            savedSettings.push(`-# Removed ${evictedCount} excess inactive channel(s).`);
+          }
 
           await interaction.reply({
-            content: [
-              "🫧 **Bubble settings saved**",
-              `Creation hub: ${hub || "Disabled"}`,
-              `Inactive category: ${inactiveCategory || "Not set"}`,
-            ].join("\n"),
-            flags: MessageFlags.Ephemeral,
+            components: [
+              new ContainerBuilder()
+                .setAccentColor(0x5865f2)
+                .addTextDisplayComponents(
+                  new TextDisplayBuilder().setContent(
+                    savedSettings.join("\n"),
+                  ),
+                ),
+            ],
+            flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
             allowedMentions: { parse: [] },
           });
         } catch (error) {
