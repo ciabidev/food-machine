@@ -186,47 +186,6 @@ module.exports = {
       return;
     }
 
-    if (interaction.customId === "color:admin:position") {
-      if (interaction.isModalSubmit()) {
-        try {
-          if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
-            await interaction.reply({
-              content: "You need Manage Roles to position color roles.",
-              flags: MessageFlags.Ephemeral,
-            });
-            return;
-          }
-
-          const anchorRole = interaction.fields.getSelectedRoles("anchor-role", true).first();
-          const colors = await db.getColors(interaction.guildId);
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-          let positionedCount;
-          try {
-            positionedCount = await interaction.client.modules.positionColorRoles(
-              interaction.guild,
-              colors,
-              anchorRole.id,
-            );
-          } catch (error) {
-            await interaction.editReply({ content: error.message });
-            return;
-          }
-
-          await db.setColorAnchor(interaction.guildId, anchorRole.id);
-          await interaction.editReply({
-            content: positionedCount
-              ? `Positioned ${positionedCount} color role(s) directly below ${anchorRole}.`
-              : `Future color roles will be placed directly below ${anchorRole}.`,
-            allowedMentions: { parse: [] },
-          });
-        } catch (error) {
-          await replyWithError(interaction, error);
-        }
-      }
-      return;
-    }
-
     if (interaction.customId === "bubble:admin:pop") {
       if (interaction.isModalSubmit()) {
         try {

@@ -13,7 +13,6 @@ module.exports = async function positionColorRoles(guild, colors, anchorRoleId) 
     throw new Error("The anchor role must be below the bot's highest role.");
   }
 
-  const colorRoleIds = new Set(colors.map((color) => color.role_id));
   const colorRoles = [];
   for (const color of colors) {
     const role = guild.roles.cache.get(color.role_id) ||
@@ -26,22 +25,21 @@ module.exports = async function positionColorRoles(guild, colors, anchorRoleId) 
   }
   if (!colorRoles.length) return 0;
 
-  const remainingRoles = guild.roles.cache
-    .filter((role) => !colorRoleIds.has(role.id))
-    .sort((left, right) => left.position - right.position);
-  const anchorIndex = [...remainingRoles.values()]
-    .findIndex((role) => role.id === anchorRole.id);
-  if (anchorIndex < 1) throw new Error("The selected anchor role is not available.");
-
   const sortedColors = guild.client.modules.colorPalette.sortColors(
     colorRoles.map(({ color }) => color),
   );
   const rolesById = new Map(colorRoles.map(({ role }) => [role.id, role]));
-  const positions = sortedColors.reverse().map((color, index) => ({
-    role: rolesById.get(color.role_id),
-    position: anchorIndex + index,
-  }));
 
-  await guild.roles.setPositions(positions);
-  return positions.length;
+  // Move the bottom color first and insert each following color immediately
+  // below the anchor. Discord shifts every role crossed by each move, keeping
+  // the existing roles below the completed color block instead of assigning
+  // duplicate positions in a role list from which the colors were removed.
+  for (const color of sortedColors.reverse()) {
+    await guild.roles.setPosition(
+      rolesById.get(color.role_id),
+      anchorRole.position - 1,
+    );
+  }
+
+  return colorRoles.length;
 };
