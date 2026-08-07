@@ -52,8 +52,7 @@ async function buildColorPickerPage(client, colors, requestedPage) {
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         [
-          "## 🎨 Palette",
-          "Choose a color below, then press **Select...** and enter its exact name or hex.",
+          "## **Use the** `Select` **button to choose a name color!**",
           `-# Page ${page + 1} of ${pageCount} · Your color may be overridden by higher-tier roles.`,
         ].join("\n"),
       ),
@@ -97,11 +96,10 @@ async function buildColorPickerPage(client, colors, requestedPage) {
         .setDisabled(page === pageCount - 1),
     );
   }
-  container.addActionRowComponents(new ActionRowBuilder().addComponents(buttons));
 
   return {
     content: null,
-    components: [container],
+    components: [container, new ActionRowBuilder().addComponents(buttons)],
     files,
     flags: MessageFlags.IsComponentsV2,
   };

@@ -1,6 +1,7 @@
 const path = require("node:path");
 const { Builder, Font, JSX } = require("canvacord");
 const { createCanvas } = require("@napi-rs/canvas");
+const { RESTJSONErrorCodes } = require("discord.js");
 
 const outfitBoldFont = Font.fromFileSync(
   path.join(__dirname, "../../assets/fonts/Outfit-Bold.ttf"),
@@ -160,7 +161,11 @@ async function saveColors(client, guild, desiredColors) {
       result.failed += 1;
       continue;
     }
-    if (role) await role.delete("Removed from cosmetic color palette");
+    if (role) {
+      await role.delete("Removed from cosmetic color palette").catch((error) => {
+        if (error.code !== RESTJSONErrorCodes.UnknownRole) throw error;
+      });
+    }
     await db.removeColorByRole(guild.id, color.role_id);
     result.removed += 1;
   }
@@ -177,15 +182,22 @@ async function saveColors(client, guild, desiredColors) {
     }
     if (role) {
       if (role.name !== roleName || role.color !== roleColor) {
-        role = await role.edit({
-          name: roleName,
-          colors: { primaryColor: roleColor },
-          reason: "Cosmetic color palette updated",
-        });
-        result.updated += 1;
+        try {
+          role = await role.edit({
+            name: roleName,
+            colors: { primaryColor: roleColor },
+            reason: "Cosmetic color palette updated",
+          });
+          result.updated += 1;
+        } catch (error) {
+          if (error.code !== RESTJSONErrorCodes.UnknownRole) throw error;
+          role = null;
+        }
       }
-      await db.setColor(guild.id, role.id, color.hex, color.name);
-      continue;
+      if (role) {
+        await db.setColor(guild.id, role.id, color.hex, color.name);
+        continue;
+      }
     }
 
     role = await guild.roles.create({
