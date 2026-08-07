@@ -16,6 +16,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require("discord.js");
+const pickerCommand = require("#commands/color/picker");
 const { issuesUrl } = require("#config");
 
 async function replyWithError(interaction, error) {
@@ -39,6 +40,193 @@ module.exports = {
   async execute(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
     const db = interaction.client.modules.db;
+
+    if (interaction.customId?.startsWith("color:picker:page:")) {
+      if (interaction.isButton()) {
+        try {
+          const requestedPage = Number(interaction.customId.split(":")[3]);
+          const colors = await db.getColors(interaction.guildId);
+          if (!colors.length) {
+            await interaction.reply({
+              content: "There are no available colors in this palette.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const isEphemeral = interaction.message.flags.has(MessageFlags.Ephemeral);
+          if (isEphemeral) {
+            await interaction.deferUpdate();
+          } else {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          }
+
+          const page = await pickerCommand.buildColorPickerPage(
+            interaction.client,
+            colors,
+            Number.isInteger(requestedPage) ? requestedPage : 0,
+          );
+          if (isEphemeral) page.attachments = [];
+          await interaction.editReply(page);
+        } catch (error) {
+          await replyWithError(interaction, error);
+        }
+      }
+      return;
+    }
+
+    if (interaction.customId === "color:picker:select") {
+      if (interaction.isButton()) {
+        try {
+          const colors = await db.getColors(interaction.guildId);
+          if (!colors.length) {
+            await interaction.reply({
+              content: "There are no available colors in this palette.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          await interaction.showModal(
+            new ModalBuilder()
+              .setCustomId("color:picker:set")
+              .setTitle("Choose a color")
+              .addLabelComponents(
+                new LabelBuilder()
+                  .setLabel("Color name or hex")
+                  .setDescription("Enter an exact palette name or hex. Leave empty to remove your color.")
+                  .setTextInputComponent(
+                    new TextInputBuilder()
+                      .setCustomId("color")
+                      .setStyle(TextInputStyle.Short)
+                      .setPlaceholder("Lavender or #B57EDC")
+                      .setRequired(false)
+                      .setMaxLength(100),
+                  ),
+              ),
+          );
+        } catch (error) {
+          await replyWithError(interaction, error);
+        }
+      }
+      return;
+    }
+
+    if (interaction.customId === "color:picker:set") {
+      if (interaction.isModalSubmit()) {
+        try {
+          const color = interaction.fields.getTextInputValue("color").trim() || null;
+          await interaction.client.modules.setColorRole(interaction, color);
+        } catch (error) {
+          await replyWithError(interaction, error);
+        }
+      }
+      return;
+    }
+
+    if (interaction.customId === "color:admin:add") {
+      if (interaction.isModalSubmit()) {
+        try {
+          if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
+            await interaction.reply({
+              content: "You need Manage Roles to edit the color palette.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          let desiredColors;
+          try {
+            desiredColors = interaction.client.modules.colorPalette.parseColors(
+              interaction.fields.getTextInputValue("colors"),
+            );
+          } catch (error) {
+            await interaction.reply({
+              content: error.message,
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const result = await interaction.client.modules.colorPalette.saveColors(
+            interaction.client,
+            interaction.guild,
+            desiredColors,
+          );
+          const pickerUpdate = await pickerCommand
+            .updateStoredColorPicker(interaction.client, interaction.guildId)
+            .catch((error) => {
+              console.error("Failed to update the saved color picker:", error);
+              return "failed";
+            });
+
+          await interaction.editReply({
+            content: [
+              "Color palette saved.",
+              `Added ${result.added} · Updated ${result.updated} · Removed ${result.removed}`,
+              result.failed
+                ? `Could not modify ${result.failed} role(s) above the bot's highest role.`
+                : null,
+              result.positionError
+                ? `Roles were saved but not positioned: ${result.positionError}`
+                : null,
+              pickerUpdate === "missing"
+                ? "The saved picker message no longer exists. Send a new one with `/color picker`."
+                : null,
+              pickerUpdate === "failed"
+                ? "The palette was saved, but the picker message could not be updated."
+                : null,
+            ].filter(Boolean).join("\n"),
+          });
+        } catch (error) {
+          await replyWithError(interaction, error);
+        }
+      }
+      return;
+    }
+
+    if (interaction.customId === "color:admin:position") {
+      if (interaction.isModalSubmit()) {
+        try {
+          if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
+            await interaction.reply({
+              content: "You need Manage Roles to position color roles.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const anchorRole = interaction.fields.getSelectedRoles("anchor-role", true).first();
+          const colors = await db.getColors(interaction.guildId);
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+          let positionedCount;
+          try {
+            positionedCount = await interaction.client.modules.positionColorRoles(
+              interaction.guild,
+              colors,
+              anchorRole.id,
+            );
+          } catch (error) {
+            await interaction.editReply({ content: error.message });
+            return;
+          }
+
+          await db.setColorAnchor(interaction.guildId, anchorRole.id);
+          await interaction.editReply({
+            content: positionedCount
+              ? `Positioned ${positionedCount} color role(s) directly below ${anchorRole}.`
+              : `Future color roles will be placed directly below ${anchorRole}.`,
+            allowedMentions: { parse: [] },
+          });
+        } catch (error) {
+          await replyWithError(interaction, error);
+        }
+      }
+      return;
+    }
+
     if (interaction.customId === "bubble:admin:pop") {
       if (interaction.isModalSubmit()) {
         try {

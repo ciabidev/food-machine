@@ -19,6 +19,7 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "canvacord": "^6.0.4",
     "discord.js": "^14.24.2",
     "dotenv": "^17.2.3",

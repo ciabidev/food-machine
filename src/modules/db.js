@@ -22,6 +22,12 @@ const DEFAULT_BUBBLE_SETTINGS = Object.freeze({
   channel_prefix: "",
 });
 
+const DEFAULT_COLOR_SETTINGS = Object.freeze({
+  anchor_role_id: null,
+  picker_channel_id: null,
+  picker_message_id: null,
+});
+
 let client;
 let db;
 let initPromise;
@@ -74,6 +80,14 @@ async function initDb() {
       await db.collection("bubbles").createIndex(
         { guild_id: 1, inactive_since: 1 },
       );
+      await db.collection("colors").createIndex(
+        { guild_id: 1, role_id: 1 },
+        { unique: true },
+      );
+      await db.collection("colors").createIndex(
+        { guild_id: 1, hex: 1 },
+        { unique: true },
+      );
       return db;
     })().catch(async (error) => {
       await client.close();
@@ -111,6 +125,10 @@ async function getSettings(guildId) {
     bubble: {
       ...DEFAULT_BUBBLE_SETTINGS,
       ...document?.bubble,
+    },
+    color: {
+      ...DEFAULT_COLOR_SETTINGS,
+      ...document?.color,
     },
   };
 }
@@ -295,6 +313,21 @@ async function setBubbleChannelPrefix(guildId, channelPrefix) {
 
   return updateGuildSettings(guildId, {
     $set: { "bubble.channel_prefix": channelPrefix },
+  });
+}
+
+async function setColorAnchor(guildId, roleId) {
+  return updateGuildSettings(guildId, {
+    $set: { "color.anchor_role_id": roleId ? String(roleId) : null },
+  });
+}
+
+async function setColorPickerMessage(guildId, channelId, messageId) {
+  return updateGuildSettings(guildId, {
+    $set: {
+      "color.picker_channel_id": channelId ? String(channelId) : null,
+      "color.picker_message_id": messageId ? String(messageId) : null,
+    },
   });
 }
 
@@ -536,6 +569,39 @@ async function getBubbles(guildId) {
   return bubbles.find({ guild_id: String(guildId) }).toArray();
 }
 
+async function getColors(guildId) {
+  return db.collection("colors")
+    .find({ guild_id: String(guildId) })
+    .toArray();
+}
+
+async function setColor(guildId, roleId, hex, name) {
+  const now = new Date();
+  return db.collection("colors").updateOne(
+    { guild_id: String(guildId), hex },
+    {
+      $set: {
+        role_id: String(roleId),
+        name: name || null,
+        updated_at: now,
+      },
+      $setOnInsert: {
+        guild_id: String(guildId),
+        hex,
+        created_at: now,
+      },
+    },
+    { upsert: true },
+  );
+}
+
+async function removeColorByRole(guildId, roleId) {
+  return db.collection("colors").deleteOne({
+    guild_id: String(guildId),
+    role_id: String(roleId),
+  });
+}
+
 async function awardMessageXp(guildId, userId, xpAmount) {
   if (!Number.isFinite(xpAmount)) {
     throw new TypeError("xpAmount must be a finite number");
@@ -614,11 +680,16 @@ module.exports = {
   removeBubble,
   getBubble,
   getBubbles,
+  getColors,
+  setColor,
+  removeColorByRole,
   setBubbleHub,
   setBubbleLocked,
   setBubbleInactiveCategory,
   setBubbleInactiveLimit,
   setBubbleAnchoredLimit,
   setBubbleChannelPrefix,
+  setColorAnchor,
+  setColorPickerMessage,
   setBubbleGuideMessage,
 };
