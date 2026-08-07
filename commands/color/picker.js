@@ -53,6 +53,7 @@ async function buildColorPickerPage(client, colors, requestedPage) {
       new TextDisplayBuilder().setContent(
         [
           "## **Use the** `Select` **button to choose a name color!**",
+          `You can also use \`/color set\` to choose a color`,
           `-# Page ${page + 1} of ${pageCount} · Your color may be overridden by higher-tier roles.`,
         ].join("\n"),
       ),
