@@ -6,7 +6,12 @@ const {
   TextDisplayBuilder,
 } = require("discord.js");
 const formatMilliseconds = require("#modules/formatMilliseconds");
-const { aiCooldownMs, aiModel, geminiApiKey } = require("#config");
+const {
+  aiCooldownMs,
+  aiFallbackModel,
+  aiModel,
+  geminiApiKey,
+} = require("#config");
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_HISTORY_LENGTH = 6_000;
@@ -265,44 +270,57 @@ async function requestGeminiResponse(messages, systemPrompt) {
   }
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(aiModel)}:generateContent`,
-      {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": geminiApiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{
-            text: `${systemPrompt}\n\nRuntime response contract:\n${RESPONSE_CONTRACT}`,
-          }],
-        },
-        contents,
-        generationConfig: {
-          maxOutputTokens: 350,
-        },
-      }),
-      signal: controller.signal,
-    });
+    const models = aiFallbackModel === aiModel
+      ? [aiModel]
+      : [aiModel, aiFallbackModel];
 
-    if (!response.ok) {
-      const errorPayload = await response.json().catch(() => null);
-      const errorMessage = String(errorPayload?.error?.message || "").trim();
-      throw new Error(
-        `Gemini returned HTTP ${response.status} for model "${aiModel}"${errorMessage ? `: ${errorMessage}` : "."}`,
+    for (const model of models) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": geminiApiKey,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            system_instruction: {
+              parts: [{
+                text: `${systemPrompt}\n\nRuntime response contract:\n${RESPONSE_CONTRACT}`,
+              }],
+            },
+            contents,
+            generationConfig: {
+              maxOutputTokens: 350,
+            },
+          }),
+          signal: controller.signal,
+        },
       );
-    }
 
-    const payload = await response.json();
-    const content = (payload.candidates?.[0]?.content?.parts || [])
-      .map((part) => part.text || "")
-      .join("")
-      .trim();
-    return content.length <= MAX_REPLY_LENGTH
-      ? content
-      : `${content.slice(0, MAX_REPLY_LENGTH - 1).trimEnd()}…`;
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        const errorMessage = String(errorPayload?.error?.message || "").trim();
+
+        if (response.status === 503 && model !== models.at(-1)) continue;
+
+        throw new Error(
+          `Gemini returned HTTP ${response.status} for model "${model}"${errorMessage ? `: ${errorMessage}` : "."}`,
+        );
+      }
+
+      const payload = await response.json();
+      const content = (payload.candidates?.[0]?.content?.parts || [])
+        .map((part) => part.text || "")
+        .join("")
+        .trim();
+      return {
+        content: content.length <= MAX_REPLY_LENGTH
+          ? content
+          : `${content.slice(0, MAX_REPLY_LENGTH - 1).trimEnd()}…`,
+        model,
+      };
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -501,7 +519,10 @@ async function handleMessage(message) {
       .replace(/[^\p{L}\p{N}' ]/gu, "")
       .trim()
       .toLowerCase();
-    let response = await requestGeminiResponse(aiMessages, settings.ai.system_prompt);
+    let {
+      content: response,
+      model: responseModel,
+    } = await requestGeminiResponse(aiMessages, settings.ai.system_prompt);
     const previousResponses = recentAiResponses.get(cooldownKey) || [];
     let normalizedResponse = "";
     const retrySystemPrompt = `${settings.ai.system_prompt}\n\nFresh-generation rule: if the draft repeats a previous answer, react to the user's follow-up instead of restating that answer. Use different wording and keep the reply natural.`;
@@ -547,7 +568,7 @@ async function handleMessage(message) {
         && !containsInventedBiography
       ) break;
 
-      response = await requestGeminiResponse(
+      const retryResult = await requestGeminiResponse(
         [
           ...aiMessages,
           {
@@ -557,6 +578,8 @@ async function handleMessage(message) {
         ],
         retrySystemPrompt,
       );
+      response = retryResult.content;
+      responseModel = retryResult.model;
     }
     normalizedResponse = response
       .replace(/\s+/g, " ")
@@ -573,7 +596,7 @@ async function handleMessage(message) {
         new TextDisplayBuilder().setContent(response),
         new SeparatorBuilder().setDivider(true),
         new TextDisplayBuilder().setContent(
-          `-# Model » \`${aiModel}\` • Response Time: \`${responseTime < 1_000 ? `${responseTime}ms` : formatMilliseconds(responseTime)}\` •`,
+          `-# Model » \`${responseModel}\` • Response Time: \`${responseTime < 1_000 ? `${responseTime}ms` : formatMilliseconds(responseTime)}\` •`,
         ),
       ],
       flags: MessageFlags.IsComponentsV2,
