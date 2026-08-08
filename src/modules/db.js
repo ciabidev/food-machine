@@ -1,5 +1,5 @@
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const { environment, mongoUri } = require("#config");
+const { defaultAiSystemPrompt, environment, mongoUri } = require("#config");
 
 const dbName = environment;
 
@@ -27,6 +27,15 @@ const DEFAULT_COLOR_SETTINGS = Object.freeze({
   picker_channel_id: null,
   picker_message_id: null,
 });
+
+const DEFAULT_AI_SETTINGS = Object.freeze({
+  enabled: false,
+  system_prompt: defaultAiSystemPrompt,
+  sample_messages: [],
+});
+
+const MAX_AI_SAMPLE_MESSAGES = 20;
+const MAX_AI_SAMPLE_LENGTH = 1_000;
 
 let client;
 let db;
@@ -129,6 +138,14 @@ async function getSettings(guildId) {
     color: {
       ...DEFAULT_COLOR_SETTINGS,
       ...document?.color,
+    },
+    ai: {
+      ...DEFAULT_AI_SETTINGS,
+      ...document?.ai,
+      system_prompt: document?.ai?.system_prompt || DEFAULT_AI_SETTINGS.system_prompt,
+      sample_messages: Array.isArray(document?.ai?.sample_messages)
+        ? document.ai.sample_messages
+        : DEFAULT_AI_SETTINGS.sample_messages,
     },
   };
 }
@@ -303,6 +320,54 @@ async function setBubbleAnchoredLimit(guildId, anchoredLimit) {
 
   return updateGuildSettings(guildId, {
     $set: { "bubble.anchored_channel_limit": anchoredLimit },
+  });
+}
+
+async function setAiEnabled(guildId, enabled) {
+  if (typeof enabled !== "boolean") {
+    throw new TypeError("enabled must be a boolean.");
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: { "ai.enabled": enabled },
+  });
+}
+
+async function setAiSystemPrompt(guildId, systemPrompt) {
+  if (typeof systemPrompt !== "string" || systemPrompt.length > 4_000) {
+    throw new RangeError("The AI system prompt must be 4,000 characters or fewer.");
+  }
+
+  const trimmedPrompt = systemPrompt.trim();
+  return updateGuildSettings(guildId, trimmedPrompt
+    ? { $set: { "ai.system_prompt": trimmedPrompt } }
+    : { $unset: { "ai.system_prompt": "" } });
+}
+
+async function addAiSampleMessages(guildId, sampleMessages) {
+  if (!Array.isArray(sampleMessages) || !sampleMessages.length) {
+    throw new RangeError("At least one AI sample message is required.");
+  }
+
+  const cleanedSamples = sampleMessages.map((sampleMessage) => (
+    typeof sampleMessage === "string" ? sampleMessage.trim() : ""
+  )).filter(Boolean);
+
+  if (!cleanedSamples.length || cleanedSamples.length > MAX_AI_SAMPLE_MESSAGES) {
+    throw new RangeError(`Add between 1 and ${MAX_AI_SAMPLE_MESSAGES} AI sample messages.`);
+  }
+
+  if (cleanedSamples.some((sampleMessage) => sampleMessage.length > MAX_AI_SAMPLE_LENGTH)) {
+    throw new RangeError(`Each AI sample message must be ${MAX_AI_SAMPLE_LENGTH} characters or fewer.`);
+  }
+
+  return updateGuildSettings(guildId, {
+    $push: {
+      "ai.sample_messages": {
+        $each: cleanedSamples,
+        $slice: -MAX_AI_SAMPLE_MESSAGES,
+      },
+    },
   });
 }
 
@@ -656,6 +721,9 @@ module.exports = {
   setLevelProfile,
   setWelcomeChannels,
   setLevelingEnabled,
+  setAiEnabled,
+  setAiSystemPrompt,
+  addAiSampleMessages,
   setLevelingXpRange,
   setLevelingCooldown,
   setLevelingChannels,

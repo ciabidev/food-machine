@@ -41,6 +41,64 @@ module.exports = {
     const command = interaction.client.commands.get(interaction.commandName);
     const db = interaction.client.modules.db;
 
+    if (interaction.customId === "ai:systemprompt" && interaction.isModalSubmit()) {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to customize the AI system prompt.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const systemPrompt = interaction.fields.getTextInputValue("system-prompt");
+        await db.setAiSystemPrompt(interaction.guildId, systemPrompt);
+        await interaction.reply({
+          content: systemPrompt.trim()
+            ? "The AI system prompt has been saved for this server."
+            : "The AI system prompt has been reset to the default.",
+          flags: MessageFlags.Ephemeral,
+        });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
+
+    if (interaction.customId === "ai:samplemessages" && interaction.isModalSubmit()) {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to add AI sample messages.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const sampleMessages = interaction.fields
+          .getTextInputValue("sample-messages")
+          .split(/\r?\n/)
+          .map((sampleMessage) => sampleMessage.trim())
+          .filter(Boolean);
+
+        await db.addAiSampleMessages(interaction.guildId, sampleMessages);
+        const settings = await db.getSettings(interaction.guildId);
+        await interaction.reply({
+          content: `Added ${sampleMessages.length} AI sample message${sampleMessages.length === 1 ? "" : "s"}. The newest ${settings.ai.sample_messages.length} sample${settings.ai.sample_messages.length === 1 ? " is" : "s are"} now saved for this server.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
+
     if (interaction.customId?.startsWith("color:picker:page:")) {
       if (interaction.isButton()) {
         try {
