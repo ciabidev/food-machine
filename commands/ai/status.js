@@ -3,7 +3,7 @@ const {
   PermissionFlagsBits,
   SlashCommandSubcommandBuilder,
 } = require("discord.js");
-const { aiCooldownMs, aiModel } = require("#config");
+const { aiCooldownMs, aiFallbackModel, aiModel } = require("#config");
 
 module.exports = {
   data: new SlashCommandSubcommandBuilder()
@@ -18,6 +18,7 @@ module.exports = {
         `**AI replies:** ${settings.ai.enabled ? "Enabled" : "Disabled"}`,
         `**Provider:** \`Google Gemini\``,
         `**Model:** \`${aiModel}\``,
+        `**Fallback model:** \`${aiFallbackModel}\``,
         `**Cooldown:** \`${aiCooldownMs}ms\``,
         `**Style samples:** \`${settings.ai.sample_messages.length}\``,
       ].join("\n"),
