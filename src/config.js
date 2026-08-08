@@ -45,8 +45,9 @@ module.exports = {
 	),
 	issuesUrl: process.env.ISSUES?.trim() || null,
 	mongoUri: requireEnvironmentVariable('MONGO_URI'),
-	ollamaUrl: process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434',
-	ollamaModel: process.env.OLLAMA_MODEL?.trim() || 'qwen3:8b',
+	geminiApiKey: requireEnvironmentVariable('GEMINI_API_KEY'),
+	aiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
+	aiFallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-3.5-flash-lite',
 	aiCooldownMs,
 	defaultAiSystemPrompt,
 };

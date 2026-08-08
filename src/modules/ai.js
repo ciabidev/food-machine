@@ -6,7 +6,7 @@ const {
   TextDisplayBuilder,
 } = require("discord.js");
 const formatMilliseconds = require("#modules/formatMilliseconds");
-const { aiCooldownMs, ollamaModel, ollamaUrl } = require("#config");
+const { aiCooldownMs, aiModel, geminiApiKey } = require("#config");
 
 const MAX_HISTORY_MESSAGES = 200;
 const MAX_HISTORY_LENGTH = 6_000;
@@ -17,7 +17,7 @@ const MAX_MENTIONED_CHANNEL_LENGTH = 3_000;
 const MAX_USER_RECENT_MESSAGES = 3;
 const MAX_USER_SCAN_CHANNELS = 20;
 const COOLDOWN_NOTICE_MS = 5_000;
-const OLLAMA_TIMEOUT_MS = 30_000;
+const GEMINI_TIMEOUT_MS = 30_000;
 const SLEEPING_GIF_PATH = path.join(__dirname, "../../assets/sleeping.gif");
 const RESPONSE_CONTRACT = [
 	"Make a social reply, not a support response.",
@@ -248,45 +248,58 @@ async function fetchRecentMessages(channel, currentMessageId) {
     .slice(-MAX_HISTORY_MESSAGES);
 }
 
-async function requestOllamaResponse(messages, systemPrompt) {
+async function requestGeminiResponse(messages, systemPrompt) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const contents = [];
+
+  for (const message of messages) {
+    const role = message.role === "assistant" ? "model" : "user";
+    const previousContent = contents.at(-1);
+
+    if (previousContent?.role === role) {
+      previousContent.parts[0].text += `\n\n${message.content}`;
+    } else {
+      contents.push({ role, parts: [{ text: message.content }] });
+    }
+  }
 
   try {
-    const response = await fetch(`${ollamaUrl.replace(/\/+$/, "")}/api/chat`, {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(aiModel)}:generateContent`,
+      {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "x-goog-api-key": geminiApiKey,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
-        model: ollamaModel,
-        messages: [
-          {
-            role: "system",
-            content: `${systemPrompt}\n\nRuntime response contract:\n${RESPONSE_CONTRACT}`,
-          },
-          ...messages,
-        ],
-        stream: false,
-        think: false,
-        keep_alive: "2m",
-        options: {
-          temperature: 0.7,
-			top_p: 0.8,
-			top_k: 20,
-			repeat_penalty: 1.12,
-			repeat_last_n: 256,
-          num_ctx: 8192,
-          num_predict: 350, // Ample headroom for long responses when requested
+        system_instruction: {
+          parts: [{
+            text: `${systemPrompt}\n\nRuntime response contract:\n${RESPONSE_CONTRACT}`,
+          }],
+        },
+        contents,
+        generationConfig: {
+          maxOutputTokens: 350,
         },
       }),
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama returned HTTP ${response.status}.`);
+      const errorPayload = await response.json().catch(() => null);
+      const errorMessage = String(errorPayload?.error?.message || "").trim();
+      throw new Error(
+        `Gemini returned HTTP ${response.status} for model "${aiModel}"${errorMessage ? `: ${errorMessage}` : "."}`,
+      );
     }
 
     const payload = await response.json();
-    const content = String(payload.message?.content || "").trim();
+    const content = (payload.candidates?.[0]?.content?.parts || [])
+      .map((part) => part.text || "")
+      .join("")
+      .trim();
     return content.length <= MAX_REPLY_LENGTH
       ? content
       : `${content.slice(0, MAX_REPLY_LENGTH - 1).trimEnd()}…`;
@@ -488,7 +501,7 @@ async function handleMessage(message) {
       .replace(/[^\p{L}\p{N}' ]/gu, "")
       .trim()
       .toLowerCase();
-    let response = await requestOllamaResponse(aiMessages, settings.ai.system_prompt);
+    let response = await requestGeminiResponse(aiMessages, settings.ai.system_prompt);
     const previousResponses = recentAiResponses.get(cooldownKey) || [];
     let normalizedResponse = "";
     const retrySystemPrompt = `${settings.ai.system_prompt}\n\nFresh-generation rule: if the draft repeats a previous answer, react to the user's follow-up instead of restating that answer. Use different wording and keep the reply natural.`;
@@ -534,7 +547,7 @@ async function handleMessage(message) {
         && !containsInventedBiography
       ) break;
 
-      response = await requestOllamaResponse(
+      response = await requestGeminiResponse(
         [
           ...aiMessages,
           {
@@ -552,7 +565,7 @@ async function handleMessage(message) {
       .toLowerCase();
     const responseTime = Date.now() - responseStartedAt;
 
-    if (!response) throw new Error("Ollama returned an empty response.");
+    if (!response) throw new Error("Gemini returned an empty response.");
 
     await message.reply({
       content: null,
@@ -560,7 +573,7 @@ async function handleMessage(message) {
         new TextDisplayBuilder().setContent(response),
         new SeparatorBuilder().setDivider(true),
         new TextDisplayBuilder().setContent(
-          `-# Model » \`${ollamaModel}\` • Response Time: \`${responseTime < 1_000 ? `${responseTime}ms` : formatMilliseconds(responseTime)}\` •`,
+          `-# Model » \`${aiModel}\` • Response Time: \`${responseTime < 1_000 ? `${responseTime}ms` : formatMilliseconds(responseTime)}\` •`,
         ),
       ],
       flags: MessageFlags.IsComponentsV2,
@@ -587,5 +600,5 @@ async function handleMessage(message) {
 
 module.exports = {
   handleMessage,
-  requestOllamaResponse,
+  requestGeminiResponse,
 };

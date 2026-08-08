@@ -3,7 +3,7 @@ const {
   PermissionFlagsBits,
   SlashCommandSubcommandBuilder,
 } = require("discord.js");
-const { aiCooldownMs, ollamaModel, ollamaUrl } = require("#config");
+const { aiCooldownMs, aiModel } = require("#config");
 
 module.exports = {
   data: new SlashCommandSubcommandBuilder()
@@ -16,8 +16,8 @@ module.exports = {
     await interaction.reply({
       content: [
         `**AI replies:** ${settings.ai.enabled ? "Enabled" : "Disabled"}`,
-        `**Model:** \`${ollamaModel}\``,
-        `**Ollama:** \`${ollamaUrl}\``,
+        `**Provider:** \`Google Gemini\``,
+        `**Model:** \`${aiModel}\``,
         `**Cooldown:** \`${aiCooldownMs}ms\``,
         `**Style samples:** \`${settings.ai.sample_messages.length}\``,
       ].join("\n"),
