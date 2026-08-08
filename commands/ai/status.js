@@ -13,6 +13,10 @@ module.exports = {
   async execute(interaction) {
 
     const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
+    const rulesChannelId = settings.ai.rules_channel_id || interaction.guild.rulesChannelId;
+    const rulesChannel = rulesChannelId
+      ? interaction.guild.channels.cache.get(rulesChannelId)
+      : null;
     await interaction.reply({
       content: [
         `**AI replies:** ${settings.ai.enabled ? "Enabled" : "Disabled"}`,
@@ -21,6 +25,7 @@ module.exports = {
         `**Fallback model:** \`${aiFallbackModel}\``,
         `**Cooldown:** \`${aiCooldownMs}ms\``,
         `**Style samples:** \`${settings.ai.sample_messages.length}\``,
+        `**Rules channel:** ${rulesChannel ? `#${rulesChannel.name}` : "Not configured"}`,
       ].join("\n"),
       flags: MessageFlags.Ephemeral,
     });

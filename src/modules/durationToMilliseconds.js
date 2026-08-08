@@ -5,8 +5,7 @@ module.exports = (duration) => {
   duration = duration.toLowerCase();
   const durationRegex = /(\d+)([smhd])/;
   const matches = duration.match(durationRegex);
-
-  console.log(duration);
+g(duration);
   if (!matches) {
     throw new Error("Invalid duration format");
   }

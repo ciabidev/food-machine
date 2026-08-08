@@ -32,6 +32,7 @@ const DEFAULT_AI_SETTINGS = Object.freeze({
   enabled: false,
   system_prompt: defaultAiSystemPrompt,
   sample_messages: [],
+  rules_channel_id: null,
 });
 
 const MAX_AI_SAMPLE_MESSAGES = 20;
@@ -342,6 +343,14 @@ async function setAiSystemPrompt(guildId, systemPrompt) {
   return updateGuildSettings(guildId, trimmedPrompt
     ? { $set: { "ai.system_prompt": trimmedPrompt } }
     : { $unset: { "ai.system_prompt": "" } });
+}
+
+async function setAiRulesChannel(guildId, channelId) {
+  return updateGuildSettings(guildId, {
+    $set: {
+      "ai.rules_channel_id": channelId ? String(channelId) : null,
+    },
+  });
 }
 
 async function addAiSampleMessages(guildId, sampleMessages) {
@@ -723,6 +732,7 @@ module.exports = {
   setLevelingEnabled,
   setAiEnabled,
   setAiSystemPrompt,
+  setAiRulesChannel,
   addAiSampleMessages,
   setLevelingXpRange,
   setLevelingCooldown,
