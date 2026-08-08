@@ -83,7 +83,7 @@ module.exports = {
 
         const sampleMessages = interaction.fields
           .getTextInputValue("sample-messages")
-          .split(/\r?\n/)
+          .split(/\r?\n\s*\r?\n/)
           .map((sampleMessage) => sampleMessage.trim())
           .filter(Boolean);
 

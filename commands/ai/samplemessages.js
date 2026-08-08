@@ -29,7 +29,7 @@ module.exports = {
         .addLabelComponents(
           new LabelBuilder()
             .setLabel("Sample messages")
-            .setDescription("Enter one example per line. The newest 20 are kept.")
+            .setDescription("Separate examples with a blank line. The newest 20 are kept.")
             .setTextInputComponent(
               new TextInputBuilder()
                 .setCustomId("sample-messages")
