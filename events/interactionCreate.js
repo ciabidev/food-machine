@@ -1361,7 +1361,7 @@ module.exports = {
       return;
     }
 
-    if (interaction.isChatInputCommand()) {
+    if (interaction.isChatInputCommand() || interaction.isMessageContextMenuCommand()) {
       if (!command) {
         console.error(`No command matching ${interaction.commandName} was found.`);
         return;

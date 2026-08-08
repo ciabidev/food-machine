@@ -351,10 +351,13 @@ async function generateGeminiReply(messages, systemPrompt) {
   }
 }
 
-async function handleMessage(message) {
-  if (!message.inGuild() || message.author.bot || !message.client.user) return;
-  if (aiAllowedGuildIds.size && !aiAllowedGuildIds.has(message.guildId)) return;
-  if (!message.channel.isTextBased()) return;
+async function handleMessage(message, { force = false, throwOnError = false } = {}) {
+  if (!message.inGuild() || !message.client.user) return { status: "unavailable" };
+  if (!force && message.author.bot) return { status: "not-invoked" };
+  if (aiAllowedGuildIds.size && !aiAllowedGuildIds.has(message.guildId)) {
+    return { status: "guild-not-allowed" };
+  }
+  if (!message.channel.isTextBased()) return { status: "unsupported-channel" };
 
   const mentionPattern = new RegExp(`^\\s*<@!?${message.client.user.id}>\\s*`);
   const directlyMentioned = mentionPattern.test(message.content);
@@ -367,10 +370,12 @@ async function handleMessage(message) {
       message.content,
     );
 
-  if (!directlyMentioned && (!repliesToBot || isAboutBot)) return;
+  if (!force && !directlyMentioned && (!repliesToBot || isAboutBot)) {
+    return { status: "not-invoked" };
+  }
 
   const settings = await message.client.modules.db.getSettings(message.guildId);
-  if (!settings.ai.enabled) return;
+  if (!settings.ai.enabled) return { status: "disabled" };
 
   const permissions = message.channel.permissionsFor(message.client.user);
   if (
@@ -380,10 +385,10 @@ async function handleMessage(message) {
       PermissionFlagsBits.SendMessages,
     ])
   )
-    return;
+    return { status: "missing-permissions" };
 
   const channelKey = `${message.guildId}:${message.channelId}`;
-  if (activeChannels.has(channelKey)) return;
+  if (activeChannels.has(channelKey)) return { status: "busy" };
 
   const cooldownLeft = (cooldowns.get(channelKey) || 0) - Date.now();
   if (cooldownLeft > 0) {
@@ -397,7 +402,7 @@ async function handleMessage(message) {
     if (cooldownReply) {
       setTimeout(() => cooldownReply.delete().catch(() => {}), COOLDOWN_NOTICE_MS);
     }
-    return;
+    return { status: "cooldown", retryAfterMs: cooldownLeft };
   }
 
   activeChannels.add(channelKey);
@@ -612,8 +617,10 @@ async function handleMessage(message) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       await message.reply(replyOptions);
     }
+    return { status: "replied" };
   } catch (error) {
     console.error("Failed to handle an AI response:", error);
+    if (throwOnError) throw error;
 
     const quotaExceeded = error.status === 429;
     const retryText = error.retryAfterMs
@@ -632,6 +639,7 @@ async function handleMessage(message) {
         allowedMentions: { parse: [] },
       })
       .catch(() => {});
+    return { status: "error" };
   } finally {
     activeChannels.delete(channelKey);
     cooldowns.set(channelKey, Date.now() + aiCooldownMs);
