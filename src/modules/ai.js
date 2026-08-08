@@ -269,11 +269,11 @@ async function requestOllamaResponse(messages, systemPrompt) {
         think: false,
         keep_alive: "2m",
         options: {
-          temperature: 0.7,
+          temperature: 0.4,
 			top_p: 0.8,
 			top_k: 20,
-			repeat_penalty: 1.12,
-			repeat_last_n: 256,
+			repeat_penalty: 1.2,
+			repeat_last_n: -1,
           num_ctx: 8192,
           num_predict: 350, // Ample headroom for long responses when requested
         },
