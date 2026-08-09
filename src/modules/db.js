@@ -30,6 +30,7 @@ const DEFAULT_COLOR_SETTINGS = Object.freeze({
 
 const DEFAULT_AI_SETTINGS = Object.freeze({
   enabled: false,
+  memory_enabled: true,
   system_prompt: defaultAiSystemPrompt,
   sample_messages: [],
   rules_channel_id: null,
@@ -37,6 +38,10 @@ const DEFAULT_AI_SETTINGS = Object.freeze({
 
 const MAX_AI_SAMPLE_MESSAGES = 20;
 const MAX_AI_SAMPLE_LENGTH = 1_000;
+const MAX_USER_AI_MEMORIES = 100;
+const MAX_GUILD_AI_MEMORIES = 200;
+const MAX_AI_MEMORY_KEY_LENGTH = 50;
+const MAX_AI_MEMORY_VALUE_LENGTH = 500;
 
 let client;
 let db;
@@ -97,6 +102,17 @@ async function initDb() {
       await db.collection("colors").createIndex(
         { guild_id: 1, hex: 1 },
         { unique: true },
+      );
+      await db.collection("guild_settings").updateMany(
+        { "ai.memory_enabled": { $exists: false } },
+        { $set: { "ai.memory_enabled": DEFAULT_AI_SETTINGS.memory_enabled } },
+      );
+      await db.collection("ai_memories").createIndex(
+        { guild_id: 1, scope: 1, subject_id: 1, key: 1 },
+        { unique: true },
+      );
+      await db.collection("ai_memories").createIndex(
+        { guild_id: 1, scope: 1, subject_id: 1, updated_at: -1 },
       );
       return db;
     })().catch(async (error) => {
@@ -334,6 +350,16 @@ async function setAiEnabled(guildId, enabled) {
   });
 }
 
+async function setAiMemoryEnabled(guildId, enabled) {
+  if (typeof enabled !== "boolean") {
+    throw new TypeError("enabled must be a boolean.");
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: { "ai.memory_enabled": enabled },
+  });
+}
+
 async function setAiSystemPrompt(guildId, systemPrompt) {
   if (typeof systemPrompt !== "string" || systemPrompt.length > 4_000) {
     throw new RangeError("The AI system prompt must be 4,000 characters or fewer.");
@@ -412,6 +438,134 @@ async function getAiMessageStats(messageId, guildId) {
 async function clearAiSampleMessages(guildId) {
   return updateGuildSettings(guildId, {
     $set: { "ai.sample_messages": [] },
+  });
+}
+
+function prepareAiMemoryKey(key) {
+  const preparedKey = String(key ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (!preparedKey || preparedKey.length > MAX_AI_MEMORY_KEY_LENGTH) {
+    throw new RangeError(
+      `Memory keys must contain letters or numbers and be ${MAX_AI_MEMORY_KEY_LENGTH} characters or fewer.`,
+    );
+  }
+  return preparedKey;
+}
+
+function prepareAiMemoryScope(scope, userId) {
+  if (!["user", "guild"].includes(scope)) {
+    throw new RangeError('Memory scope must be either "user" or "guild".');
+  }
+  if (scope === "user" && !userId) {
+    throw new RangeError("User memories require a user ID.");
+  }
+  return scope === "user" ? String(userId) : null;
+}
+
+async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
+  const normalizedGuildId = String(guildId);
+  const subjectId = prepareAiMemoryScope(scope, userId);
+  const preparedKey = prepareAiMemoryKey(key);
+  const preparedValue = String(value ?? "").trim();
+  if (!preparedValue || preparedValue.length > MAX_AI_MEMORY_VALUE_LENGTH) {
+    throw new RangeError(
+      `Memory values must be between 1 and ${MAX_AI_MEMORY_VALUE_LENGTH} characters.`,
+    );
+  }
+
+  const collection = db.collection("ai_memories");
+  const filter = {
+    guild_id: normalizedGuildId,
+    scope,
+    subject_id: subjectId,
+    key: preparedKey,
+  };
+  const existingMemory = await collection.findOne(filter, { projection: { _id: 1 } });
+  if (!existingMemory) {
+    const memoryLimit = scope === "user" ? MAX_USER_AI_MEMORIES : MAX_GUILD_AI_MEMORIES;
+    const memoryCount = await collection.countDocuments({
+      guild_id: normalizedGuildId,
+      scope,
+      subject_id: subjectId,
+    });
+    if (memoryCount >= memoryLimit) {
+      throw new RangeError(
+        `${scope === "user" ? "This user" : "This server"} already has the maximum of ${memoryLimit} AI memories.`,
+      );
+    }
+  }
+
+  const now = new Date();
+  await collection.updateOne(
+    filter,
+    {
+      $set: {
+        value: preparedValue,
+        source_channel_id: source.channelId ? String(source.channelId) : null,
+        source_message_id: source.messageId ? String(source.messageId) : null,
+        created_by_user_id: source.createdByUserId
+          ? String(source.createdByUserId)
+          : String(userId),
+        updated_at: now,
+      },
+      $setOnInsert: {
+        ...filter,
+        created_at: now,
+      },
+    },
+    { upsert: true },
+  );
+
+  return collection.findOne(filter);
+}
+
+async function getAiMemories(guildId, scope, userId) {
+  const subjectId = prepareAiMemoryScope(scope, userId);
+  return db.collection("ai_memories")
+    .find({ guild_id: String(guildId), scope, subject_id: subjectId })
+    .sort({ updated_at: -1 })
+    .toArray();
+}
+
+async function getAiMemoriesForContext(guildId, userId) {
+  const collection = db.collection("ai_memories");
+  const normalizedGuildId = String(guildId);
+  const normalizedUserId = String(userId);
+  const [userMemories, guildMemories] = await Promise.all([
+    collection
+      .find({ guild_id: normalizedGuildId, scope: "user", subject_id: normalizedUserId })
+      .sort({ updated_at: -1 })
+      .limit(MAX_USER_AI_MEMORIES)
+      .toArray(),
+    collection
+      .find({ guild_id: normalizedGuildId, scope: "guild", subject_id: null })
+      .sort({ updated_at: -1 })
+      .limit(MAX_GUILD_AI_MEMORIES)
+      .toArray(),
+  ]);
+  return { userMemories, guildMemories };
+}
+
+async function deleteAiMemory(guildId, scope, userId, key) {
+  const subjectId = prepareAiMemoryScope(scope, userId);
+  return db.collection("ai_memories").deleteOne({
+    guild_id: String(guildId),
+    scope,
+    subject_id: subjectId,
+    key: prepareAiMemoryKey(key),
+  });
+}
+
+async function clearAiMemories(guildId, scope, userId) {
+  const subjectId = prepareAiMemoryScope(scope, userId);
+  return db.collection("ai_memories").deleteMany({
+    guild_id: String(guildId),
+    scope,
+    subject_id: subjectId,
   });
 }
 
@@ -766,12 +920,18 @@ module.exports = {
   setWelcomeChannels,
   setLevelingEnabled,
   setAiEnabled,
+  setAiMemoryEnabled,
   setAiSystemPrompt,
   setAiRulesChannel,
   addAiSampleMessages,
   saveAiMessageStats,
   getAiMessageStats,
   clearAiSampleMessages,
+  saveAiMemory,
+  getAiMemories,
+  getAiMemoriesForContext,
+  deleteAiMemory,
+  clearAiMemories,
   setLevelingXpRange,
   setLevelingCooldown,
   setLevelingChannels,

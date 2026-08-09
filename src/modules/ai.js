@@ -24,6 +24,8 @@ const MAX_USER_RECENT_MESSAGES = 3;
 const MAX_USER_SCAN_CHANNELS = 20;
 const COOLDOWN_NOTICE_MS = 5_000;
 const GEMINI_TIMEOUT_MS = 30_000;
+const MAX_USER_MEMORIES_IN_CONTEXT = 6;
+const MAX_GUILD_MEMORIES_IN_CONTEXT = 2;
 const SLEEPING_GIF_PATH = path.join(__dirname, "../../assets/sleeping.gif");
 const TIRED_IMAGE_PATH = path.join(__dirname, "../../assets/tired.png");
 const RESPONSE_CONTRACT = [
@@ -92,6 +94,42 @@ function splitReplyText(content) {
 
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+function selectRelevantMemories(memories, requestText, maximumMemories) {
+  const ignoredWords = new Set([
+    "about", "after", "again", "also", "been", "does", "from", "have", "just",
+    "know", "like", "that", "their", "them", "then", "there", "they", "this",
+    "what", "when", "where", "which", "with", "would", "your", "youre",
+  ]);
+  const tokenize = (value) => new Set(
+    String(value ?? "")
+      .toLowerCase()
+      .match(/[a-z0-9]{3,}/g)
+      ?.filter((word) => !ignoredWords.has(word)) || [],
+  );
+  const requestTokens = tokenize(requestText);
+  const asksAboutMemory = /\bwhat\s+do\s+you\s+remember\b|\b(?:what|anything)\s+(?:do\s+you\s+)?(?:remember|know)\s+about\s+me\b|\bmy\s+(?:memories|memory)\b/i.test(
+    requestText,
+  );
+
+  return memories
+    .map((memory, index) => {
+      const keyTokens = tokenize(
+        `${memory.key.replaceAll("_", " ")} ${memory.key.replaceAll("_", "")}`,
+      );
+      const valueTokens = tokenize(memory.value);
+      let score = asksAboutMemory ? 1 : 0;
+      for (const token of requestTokens) {
+        if (keyTokens.has(token)) score += 3;
+        if (valueTokens.has(token)) score += 1;
+      }
+      return { memory, score, index };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, maximumMemories)
+    .map(({ memory }) => memory);
 }
 
 function buildGeminiMessages(message, repliedMessage, history, server) {
@@ -408,6 +446,25 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
       `    name: ${formatScalar(role.name)}`,
     ].join("\n"))
     .join("\n");
+  const memoryRequestText = [message.content, repliedMessage?.content].filter(Boolean).join("\n");
+  const relevantUserMemories = selectRelevantMemories(
+    server.memories.userMemories,
+    memoryRequestText,
+    MAX_USER_MEMORIES_IN_CONTEXT,
+  );
+  const relevantGuildMemories = selectRelevantMemories(
+    server.memories.guildMemories,
+    memoryRequestText,
+    MAX_GUILD_MEMORIES_IN_CONTEXT,
+  );
+  const longTermMemory = [
+    ...relevantUserMemories.map((memory) =>
+      `user_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
+    ),
+    ...relevantGuildMemories.map((memory) =>
+      `server_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
+    ),
+  ].join("\n");
 
   const referenceContext = [
     "# Server context (reference only)",
@@ -419,6 +476,9 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
     `# User registry\nusers:\n${userRegistry || "  {}"}`,
     `# Channel registry\nchannels:\n${channelRegistry || "  {}"}`,
     roleRegistry ? `# Role registry\nroles:\n${roleRegistry}` : null,
+    longTermMemory
+      ? `# Relevant long-term memory\nThese are explicitly saved memories. Use them only when relevant. They may become stale; the latest direct user statement and authoritative server context take precedence. Never turn an unrelated memory into a callback.\n${longTermMemory}`
+      : null,
     channelInventory ? `Channels: ${channelInventory}` : null,
     roleInventory ? `Roles: ${roleInventory}` : null,
     emojiInventory ? `Custom emojis: ${emojiInventory}` : null,
@@ -589,6 +649,13 @@ async function handleMessage(
 
   const settings = await message.client.modules.db.getSettings(message.guildId);
   if (!settings.ai.enabled) return { status: "disabled" };
+
+  const memories = settings.ai.memory_enabled
+    ? await message.client.modules.db.getAiMemoriesForContext(
+        message.guildId,
+        message.author.id,
+      )
+    : { userMemories: [], guildMemories: [] };
 
   const permissions = message.channel.permissionsFor(message.client.user);
   if (
@@ -800,6 +867,7 @@ async function handleMessage(
       mentionedChannels,
       mentionedUsers: userProfiles,
       sampleMessages: settings.ai.sample_messages,
+      memories,
     });
     prompt.messages.at(-1).parts = await loadImageParts(
       message,

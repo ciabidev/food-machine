@@ -41,6 +41,7 @@ module.exports = {
               [
                 "### Status",
                 `**AI replies:** ${enabled ? "🟢 Enabled" : "🔴 Disabled"}`,
+                `**Memory:** ${settings.ai.memory_enabled ? "🟢 Enabled" : "🔴 Disabled"}`,
                 `**Provider:** Google Gemini`,
               ].join("\n"),
             ),

@@ -7,6 +7,7 @@ const {
   Collection,
   GatewayIntentBits,
   SlashCommandSubcommandBuilder,
+  SlashCommandSubcommandGroupBuilder,
 } = require("discord.js");
 const { discordToken } = require("#config");
 
@@ -34,7 +35,10 @@ for (const folder of commandFolders) {
     const commandImport = `#commands/${folder.name}/${file.slice(0, -3)}`;
     const command = require(commandImport);
 
-    if (command.data instanceof SlashCommandSubcommandBuilder) continue;
+    if (
+      command.data instanceof SlashCommandSubcommandBuilder
+      || command.data instanceof SlashCommandSubcommandGroupBuilder
+    ) continue;
     if (!command.data || typeof command.execute !== "function") {
       console.warn(`[COMMAND] ${commandImport} must export data and execute.`);
       continue;
