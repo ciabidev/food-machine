@@ -823,13 +823,22 @@ async function handleMessage(
       ? `${responseTime}ms`
       : formatMilliseconds(responseTime);
     const footer = `-# Model » \`${replyModel}\` • Response Time: \`${responseTimeText}\``;
-    const foodCardComponents = await createAiFoodCardComponents(replyText, footer);
+    const foodCardComponents = await createAiFoodCardComponents(replyText);
     const responses = foodCardComponents
-      ? [{ components: foodCardComponents, flags: MessageFlags.IsComponentsV2 }]
-      : splitReplyText(`${replyText}\n${footer}`).map((content) => ({ content }));
+      ? [
+          {
+            options: { components: foodCardComponents, flags: MessageFlags.IsComponentsV2 },
+            saveStats: true,
+          },
+          { options: { content: footer }, saveStats: false },
+        ]
+      : splitReplyText(`${replyText}\n${footer}`).map((content) => ({
+          options: { content },
+          saveStats: true,
+        }));
 
     for (const [index, response] of responses.entries()) {
-      const responseOptions = { ...response, allowedMentions: { parse: [] } };
+      const responseOptions = { ...response.options, allowedMentions: { parse: [] } };
       const send = () => index === 0
         ? message.reply(responseOptions)
         : message.channel.send(responseOptions);
@@ -844,6 +853,8 @@ async function handleMessage(
         await new Promise((resolve) => setTimeout(resolve, 500));
         sentMessage = await send();
       }
+
+      if (!response.saveStats) continue;
 
       await message.client.modules.db.saveAiMessageStats(
         sentMessage.id,

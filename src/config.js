@@ -51,6 +51,7 @@ module.exports = {
 	issuesUrl: process.env.ISSUES?.trim() || null,
 	mongoUri: requireEnvironmentVariable('MONGO_URI'),
 	geminiApiKey: requireEnvironmentVariable('GEMINI_API_KEY'),
+	unsplashAccessKey: process.env.UNSPLASH_ACCESS_KEY?.trim() || null,
 	aiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash',
 	aiFallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-3.5-flash-lite',
 	aiCooldownMs,
