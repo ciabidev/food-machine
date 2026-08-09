@@ -1,12 +1,5 @@
-const {
-  LabelBuilder,
-  MessageFlags,
-  ModalBuilder,
-  PermissionFlagsBits,
-  SlashCommandSubcommandBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-} = require("discord.js");
+const { MessageFlags, PermissionFlagsBits, SlashCommandSubcommandBuilder } = require("discord.js");
+const { aiSamplesPanel } = require("#modules/aiSampleMessagesPanel");
 
 module.exports = {
   data: new SlashCommandSubcommandBuilder()
@@ -22,23 +15,11 @@ module.exports = {
       return;
     }
 
-    await interaction.showModal(
-      new ModalBuilder()
-        .setCustomId("ai:samplemessages")
-        .setTitle("AI sample messages")
-        .addLabelComponents(
-          new LabelBuilder()
-            .setLabel("Sample messages")
-            .setDescription("Separate examples with a blank line. The newest 20 are kept.")
-            .setTextInputComponent(
-              new TextInputBuilder()
-                .setCustomId("sample-messages")
-                .setStyle(TextInputStyle.Paragraph)
-                .setPlaceholder("bro what\nthat is actually wild\nno shot")
-                .setMaxLength(4_000)
-                .setRequired(true),
-            ),
-        ),
-    );
+    const components = await aiSamplesPanel(interaction);
+    await interaction.reply({
+      components,
+      flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+      allowedMentions: { parse: [] },
+    });
   },
 };

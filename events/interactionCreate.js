@@ -17,6 +17,10 @@ const {
   ButtonStyle,
 } = require("discord.js");
 const pickerCommand = require("#commands/color/picker");
+const {
+  aiSamplesPanel,
+  clearSamplesConfirmation,
+} = require("#modules/aiSampleMessagesPanel");
 const { issuesUrl } = require("#config");
 
 async function replyWithError(interaction, error) {
@@ -68,7 +72,7 @@ module.exports = {
       return;
     }
 
-    if (interaction.customId === "ai:samplemessages" && interaction.isModalSubmit()) {
+    if (interaction.customId?.startsWith("ai:samples:add-modal:") && interaction.isModalSubmit()) {
       try {
         if (
           !interaction.inGuild()
@@ -89,10 +93,80 @@ module.exports = {
 
         await db.addAiSampleMessages(interaction.guildId, sampleMessages);
         const settings = await db.getSettings(interaction.guildId);
-        await interaction.reply({
-          content: `Added ${sampleMessages.length} AI sample message${sampleMessages.length === 1 ? "" : "s"}. The newest ${settings.ai.sample_messages.length} sample${settings.ai.sample_messages.length === 1 ? " is" : "s are"} now saved for this server.`,
-          flags: MessageFlags.Ephemeral,
+        const lastPage = Math.max(0, Math.ceil(settings.ai.sample_messages.length / 10) - 1);
+        const components = await aiSamplesPanel(interaction, lastPage);
+        await interaction.update({
+          components,
+          allowedMentions: { parse: [] },
         });
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
+
+    if (interaction.customId?.startsWith("ai:samples:") && interaction.isButton()) {
+      try {
+        if (
+          !interaction.inGuild()
+          || !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          await interaction.reply({
+            content: "You need Manage Server to manage AI sample messages.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        if (interaction.customId.startsWith("ai:samples:page:")) {
+          const page = Number(interaction.customId.split(":")[3]);
+          const components = await aiSamplesPanel(
+            interaction,
+            Number.isInteger(page) ? page : 0,
+          );
+          await interaction.update({ components, allowedMentions: { parse: [] } });
+          return;
+        }
+
+        if (interaction.customId.startsWith("ai:samples:add:")) {
+          const page = Number(interaction.customId.split(":")[3]);
+          await interaction.showModal(
+            new ModalBuilder()
+              .setCustomId(`ai:samples:add-modal:${Number.isInteger(page) ? page : 0}`)
+              .setTitle("Add AI sample messages")
+              .addLabelComponents(
+                new LabelBuilder()
+                  .setLabel("Sample messages")
+                  .setDescription("Separate samples with a blank line. The newest 20 are kept.")
+                  .setTextInputComponent(
+                    new TextInputBuilder()
+                      .setCustomId("sample-messages")
+                      .setStyle(TextInputStyle.Paragraph)
+                      .setPlaceholder("first sample\n\nsecond sample")
+                      .setMaxLength(4_000)
+                      .setRequired(true),
+                  ),
+              ),
+          );
+          return;
+        }
+
+        if (interaction.customId.startsWith("ai:samples:clear:")) {
+          const page = Number(interaction.customId.split(":")[3]);
+          const settings = await db.getSettings(interaction.guildId);
+          const components = clearSamplesConfirmation(
+            Number.isInteger(page) ? page : 0,
+            settings.ai.sample_messages.length,
+          );
+          await interaction.update({ components, allowedMentions: { parse: [] } });
+          return;
+        }
+
+        if (interaction.customId === "ai:samples:clear-confirm") {
+          await db.clearAiSampleMessages(interaction.guildId);
+          const components = await aiSamplesPanel(interaction);
+          await interaction.update({ components, allowedMentions: { parse: [] } });
+        }
       } catch (error) {
         await replyWithError(interaction, error);
       }

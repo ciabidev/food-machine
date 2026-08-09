@@ -409,6 +409,12 @@ async function getAiMessageStats(messageId, guildId) {
   });
 }
 
+async function clearAiSampleMessages(guildId) {
+  return updateGuildSettings(guildId, {
+    $set: { "ai.sample_messages": [] },
+  });
+}
+
 async function setBubbleChannelPrefix(guildId, channelPrefix) {
   if (typeof channelPrefix !== "string" || channelPrefix.length > 25) {
     throw new RangeError("Bubble channel prefix must be 25 characters or fewer.");
@@ -765,6 +771,7 @@ module.exports = {
   addAiSampleMessages,
   saveAiMessageStats,
   getAiMessageStats,
+  clearAiSampleMessages,
   setLevelingXpRange,
   setLevelingCooldown,
   setLevelingChannels,
