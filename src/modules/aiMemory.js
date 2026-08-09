@@ -2,13 +2,21 @@ const { generateGeminiResponse } = require("#modules/ai");
 
 const MEMORY_CONTEXT_MESSAGES = 8;
 const MAX_CONTEXT_MESSAGE_LENGTH = 800;
-const MEMORY_EXTRACTION_PROMPT = [
+const USER_MEMORY_EXTRACTION_PROMPT = [
   "Extract one concise, durable memory about the selected Discord message's author.",
   "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to attribute another speaker's statement to the selected author.",
   "Preserve useful specifics such as names, preferences, relationships, titles, quantities, and ongoing projects. Summarize rather than quoting the conversation.",
   "Create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters.",
   "Set should_save to false when the selected message contains no meaningful claim, is only a question with no answer from its author, would require guessing, or contains credentials, authentication secrets, exact private addresses, or similarly dangerous private data.",
   "A joke or shared event may be saved when the user deliberately selected it, but describe it accurately as a joke or event instead of converting it into a factual personal trait.",
+].join("\n");
+const SERVER_MEMORY_EXTRACTION_PROMPT = [
+  "Extract one concise, durable memory about this Discord server or its community.",
+  "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to turn one member's personal preference or biography into a server-wide fact.",
+  "Good server memories include local terminology, ongoing community projects, traditions, channel purposes, and established bot or server lore. Do not save temporary chatter, individual preferences, moderation secrets, or claims that require guessing.",
+  "Preserve useful specifics such as names, titles, quantities, and established meanings. Summarize rather than quoting the conversation.",
+  "Create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters.",
+  "Set should_save to false when the selected message contains no meaningful server knowledge or contains credentials, authentication secrets, exact private addresses, private moderation information, or similarly dangerous private data.",
 ].join("\n");
 
 function formatMemoryContextContent(message) {
@@ -76,19 +84,23 @@ async function collectMemoryContext(targetMessage) {
   );
 }
 
-async function extractAiMemory(targetMessage) {
+async function extractAiMemory(targetMessage, scope) {
+  if (!["user", "guild"].includes(scope)) {
+    throw new RangeError('Memory scope must be either "user" or "guild".');
+  }
   const contextMessages = await collectMemoryContext(targetMessage);
   const subjectName = targetMessage.member?.displayName
     || targetMessage.author.globalName
     || targetMessage.author.username;
   const context = [
+    `Memory scope: ${scope === "user" ? "personal user memory" : "server-wide memory"}`,
     `Selected author: ${JSON.stringify(subjectName)} [${targetMessage.author.id}]`,
     "Nearby Discord messages (oldest to newest):",
     ...contextMessages.map((message) => formatMemoryContextMessage(message, targetMessage.id)),
   ].join("\n\n");
   const response = await generateGeminiResponse(
     [{ role: "user", content: context }],
-    MEMORY_EXTRACTION_PROMPT,
+    scope === "user" ? USER_MEMORY_EXTRACTION_PROMPT : SERVER_MEMORY_EXTRACTION_PROMPT,
     {
       generationConfig: {
         maxOutputTokens: 300,

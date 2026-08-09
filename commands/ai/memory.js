@@ -11,34 +11,24 @@ const MEMORIES_PER_VIEW = 10;
 function addScopeOption(subcommand) {
   return subcommand.addStringOption((option) => option
     .setName("scope")
-    .setDescription("Use your own memory by default; server memory is managed by staff.")
+    .setDescription("Your memory follows you across servers; server memory stays in this server.")
     .addChoices(
-      { name: "My memory", value: "user" },
-      { name: "Server memory", value: "guild" },
+      { name: "My global memory", value: "user" },
+      { name: "This server's memory", value: "guild" },
     ));
-}
-
-function addUserOption(subcommand) {
-  return subcommand.addUserOption((option) => option
-    .setName("user")
-    .setDescription("Manage another user's memory (Manage Server only)."));
 }
 
 function getMemoryTarget(interaction) {
   const scope = interaction.options.getString("scope") || "user";
-  const requestedUser = interaction.options.getUser("user");
   const canManageGuild = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 
   if (scope === "guild" && !canManageGuild) {
     throw new Error("You need Manage Server to manage server-wide AI memories.");
   }
-  if (requestedUser && requestedUser.id !== interaction.user.id && !canManageGuild) {
-    throw new Error("You need Manage Server to manage another user's AI memories.");
-  }
 
   return {
     scope,
-    user: scope === "user" ? requestedUser || interaction.user : null,
+    user: scope === "user" ? interaction.user : null,
   };
 }
 
@@ -52,14 +42,14 @@ const data = new SlashCommandSubcommandGroupBuilder()
   .setDescription("Manage persistent AI memories.")
   .addSubcommand((subcommand) => subcommand
     .setName("enable")
-    .setDescription("Allow Food Machine to use saved memories."))
+    .setDescription("Allow Food Machine to use saved memories in this server."))
   .addSubcommand((subcommand) => subcommand
     .setName("disable")
-    .setDescription("Stop Food Machine from using saved memories."))
-  .addSubcommand((subcommand) => addUserOption(addScopeOption(subcommand
+    .setDescription("Stop Food Machine from using saved memories in this server."))
+  .addSubcommand((subcommand) => addScopeOption(subcommand
     .setName("view")
-    .setDescription("View saved AI memories."))))
-  .addSubcommand((subcommand) => addUserOption(addScopeOption(subcommand
+    .setDescription("View saved AI memories.")))
+  .addSubcommand((subcommand) => addScopeOption(subcommand
     .setName("add")
     .setDescription("Add or update an AI memory.")
     .addStringOption((option) => option
@@ -71,22 +61,22 @@ const data = new SlashCommandSubcommandGroupBuilder()
       .setName("value")
       .setDescription("What Food Machine should remember.")
       .setMaxLength(500)
-      .setRequired(true)))))
-  .addSubcommand((subcommand) => addUserOption(addScopeOption(subcommand
+      .setRequired(true))))
+  .addSubcommand((subcommand) => addScopeOption(subcommand
     .setName("forget")
     .setDescription("Forget one AI memory.")
     .addStringOption((option) => option
       .setName("key")
       .setDescription("The memory key to forget.")
       .setAutocomplete(true)
-      .setRequired(true)))))
-  .addSubcommand((subcommand) => addUserOption(addScopeOption(subcommand
+      .setRequired(true))))
+  .addSubcommand((subcommand) => addScopeOption(subcommand
     .setName("clear")
     .setDescription("Clear all memories in the selected scope.")
     .addBooleanOption((option) => option
       .setName("confirm")
       .setDescription("Confirm that every selected memory should be removed.")
-      .setRequired(true)))));
+      .setRequired(true))));
 
 async function execute(interaction) {
   const operation = interaction.options.getSubcommand();
@@ -120,7 +110,7 @@ async function execute(interaction) {
   if (operation === "view") {
     const memories = await db.getAiMemories(interaction.guildId, target.scope, target.user?.id);
     const visibleMemories = memories.slice(0, MEMORIES_PER_VIEW);
-    const owner = target.scope === "guild" ? "Server" : target.user.displayName;
+    const owner = target.scope === "guild" ? "Server" : "Your";
     const lines = [
       `# 🧠 ${owner} AI memories`,
       `-# ${memories.length} saved${memories.length > MEMORIES_PER_VIEW ? ` • showing newest ${MEMORIES_PER_VIEW}` : ""}`,
@@ -152,6 +142,7 @@ async function execute(interaction) {
       interaction.options.getString("key", true),
       interaction.options.getString("value", true),
       {
+        guildId: interaction.guildId,
         channelId: interaction.channelId,
         createdByUserId: interaction.user.id,
       },

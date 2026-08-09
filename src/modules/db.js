@@ -466,9 +466,16 @@ function prepareAiMemoryScope(scope, userId) {
   return scope === "user" ? String(userId) : null;
 }
 
+function getAiMemoryOwner(guildId, scope, userId) {
+  return {
+    guild_id: scope === "user" ? null : String(guildId),
+    scope,
+    subject_id: prepareAiMemoryScope(scope, userId),
+  };
+}
+
 async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
-  const normalizedGuildId = String(guildId);
-  const subjectId = prepareAiMemoryScope(scope, userId);
+  const owner = getAiMemoryOwner(guildId, scope, userId);
   const preparedKey = prepareAiMemoryKey(key);
   const preparedValue = String(value ?? "").trim();
   if (!preparedValue || preparedValue.length > MAX_AI_MEMORY_VALUE_LENGTH) {
@@ -479,19 +486,13 @@ async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
 
   const collection = db.collection("ai_memories");
   const filter = {
-    guild_id: normalizedGuildId,
-    scope,
-    subject_id: subjectId,
+    ...owner,
     key: preparedKey,
   };
   const existingMemory = await collection.findOne(filter, { projection: { _id: 1 } });
   if (!existingMemory) {
     const memoryLimit = scope === "user" ? MAX_USER_AI_MEMORIES : MAX_GUILD_AI_MEMORIES;
-    const memoryCount = await collection.countDocuments({
-      guild_id: normalizedGuildId,
-      scope,
-      subject_id: subjectId,
-    });
+    const memoryCount = await collection.countDocuments(owner);
     if (memoryCount >= memoryLimit) {
       throw new RangeError(
         `${scope === "user" ? "This user" : "This server"} already has the maximum of ${memoryLimit} AI memories.`,
@@ -505,6 +506,7 @@ async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
     {
       $set: {
         value: preparedValue,
+        source_guild_id: source.guildId ? String(source.guildId) : String(guildId),
         source_channel_id: source.channelId ? String(source.channelId) : null,
         source_message_id: source.messageId ? String(source.messageId) : null,
         created_by_user_id: source.createdByUserId
@@ -524,9 +526,8 @@ async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
 }
 
 async function getAiMemories(guildId, scope, userId) {
-  const subjectId = prepareAiMemoryScope(scope, userId);
   return db.collection("ai_memories")
-    .find({ guild_id: String(guildId), scope, subject_id: subjectId })
+    .find(getAiMemoryOwner(guildId, scope, userId))
     .sort({ updated_at: -1 })
     .toArray();
 }
@@ -537,7 +538,7 @@ async function getAiMemoriesForContext(guildId, userId) {
   const normalizedUserId = String(userId);
   const [userMemories, guildMemories] = await Promise.all([
     collection
-      .find({ guild_id: normalizedGuildId, scope: "user", subject_id: normalizedUserId })
+      .find({ guild_id: null, scope: "user", subject_id: normalizedUserId })
       .sort({ updated_at: -1 })
       .limit(MAX_USER_AI_MEMORIES)
       .toArray(),
@@ -551,22 +552,16 @@ async function getAiMemoriesForContext(guildId, userId) {
 }
 
 async function deleteAiMemory(guildId, scope, userId, key) {
-  const subjectId = prepareAiMemoryScope(scope, userId);
   return db.collection("ai_memories").deleteOne({
-    guild_id: String(guildId),
-    scope,
-    subject_id: subjectId,
+    ...getAiMemoryOwner(guildId, scope, userId),
     key: prepareAiMemoryKey(key),
   });
 }
 
 async function clearAiMemories(guildId, scope, userId) {
-  const subjectId = prepareAiMemoryScope(scope, userId);
-  return db.collection("ai_memories").deleteMany({
-    guild_id: String(guildId),
-    scope,
-    subject_id: subjectId,
-  });
+  return db.collection("ai_memories").deleteMany(
+    getAiMemoryOwner(guildId, scope, userId),
+  );
 }
 
 async function setBubbleChannelPrefix(guildId, channelPrefix) {

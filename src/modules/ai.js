@@ -459,7 +459,7 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
   );
   const longTermMemory = [
     ...relevantUserMemories.map((memory) =>
-      `user_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
+      `global_user_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
     ),
     ...relevantGuildMemories.map((memory) =>
       `server_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
@@ -477,7 +477,7 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
     `# Channel registry\nchannels:\n${channelRegistry || "  {}"}`,
     roleRegistry ? `# Role registry\nroles:\n${roleRegistry}` : null,
     longTermMemory
-      ? `# Relevant long-term memory\nThese are explicitly saved memories. Use them only when relevant. They may become stale; the latest direct user statement and authoritative server context take precedence. Never turn an unrelated memory into a callback.\n${longTermMemory}`
+      ? `# Relevant long-term memory\nGlobal user memories belong only to the current Discord author and follow that user across servers. Server memories are shared only within this server. Use memories only when relevant. They may become stale; the latest direct user statement and authoritative server context take precedence. Never turn an unrelated memory into a callback.\n${longTermMemory}`
       : null,
     channelInventory ? `Channels: ${channelInventory}` : null,
     roleInventory ? `Roles: ${roleInventory}` : null,
