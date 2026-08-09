@@ -55,10 +55,15 @@ async function findUnsplashFoodPhoto(dishName) {
   const timeout = setTimeout(() => controller.abort(), FOOD_IMAGE_TIMEOUT_MS);
 
   try {
+    const searchParameters = new URLSearchParams({
+      query: dishName,
+      per_page: "1",
+      content_filter: "high",
+      client_id: unsplashAccessKey,
+    });
     const response = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(dishName)}&per_page=1&content_filter=high`,
+      `https://api.unsplash.com/search/photos?${searchParameters}`,
       {
-        headers: { authorization: `Client-ID ${unsplashAccessKey}` },
         signal: controller.signal,
       },
     );
