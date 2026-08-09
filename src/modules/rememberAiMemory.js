@@ -34,14 +34,6 @@ module.exports = async function saveMessageAsAiMemory(interaction, scope) {
     });
     return;
   }
-  if (!targetMessage.content.trim()) {
-    await interaction.reply({
-      content: "That message has no text to remember.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
   const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
   if (!settings.ai.memory_enabled) {
     await interaction.reply({
@@ -53,33 +45,38 @@ module.exports = async function saveMessageAsAiMemory(interaction, scope) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
-    const extractedMemory = await extractAiMemory(targetMessage, scope);
-    if (!extractedMemory) {
+    const extractedMemories = await extractAiMemory(targetMessage, scope);
+    if (!extractedMemories.length) {
       await interaction.editReply(
         `I couldn't find a safe, meaningful ${serverMemory ? "server" : "personal"} memory in that message and its nearby context.`,
       );
       return;
     }
 
-    const memory = await interaction.client.modules.db.saveAiMemory(
-      interaction.guildId,
-      scope,
-      serverMemory ? null : interaction.user.id,
-      extractedMemory.key,
-      extractedMemory.value,
-      {
-        guildId: interaction.guildId,
-        channelId: targetMessage.channelId,
-        messageId: targetMessage.id,
-        createdByUserId: interaction.user.id,
-      },
-    );
-    await interaction.editReply({
-      content: `Remembered ${serverMemory ? "for this server" : "for you"} as \`${memory.key}\`: ${memory.value}`,
-      allowedMentions: { parse: [] },
-    });
+    const savedMemories = [];
+    for (const extractedMemory of extractedMemories) {
+      savedMemories.push(await interaction.client.modules.db.saveAiMemory(
+        interaction.guildId,
+        scope,
+        serverMemory ? null : interaction.user.id,
+        extractedMemory.key,
+        extractedMemory.value,
+        {
+          guildId: interaction.guildId,
+          channelId: targetMessage.channelId,
+          messageId: targetMessage.id,
+          createdByUserId: interaction.user.id,
+        },
+      ));
+    }
+
+    const destination = serverMemory ? "for this server" : "for you";
+    const content = savedMemories.length === 1
+      ? `Remembered ${destination} as \`${savedMemories[0].key}\`: ${savedMemories[0].value}`
+      : `Remembered ${savedMemories.length} memories ${destination}: ${savedMemories.map((memory) => `\`${memory.key}\``).join(", ")}`;
+    await interaction.editReply({ content, allowedMentions: { parse: [] } });
   } catch (error) {
-    console.error(`Failed to extract an AI ${scope} memory:`, error);
+    console.error(`Failed to create AI ${scope} memories:`, error);
     await interaction.editReply(
       "I couldn't create a memory from that message. Please try again in a bit.",
     );

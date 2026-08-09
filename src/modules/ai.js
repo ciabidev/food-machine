@@ -24,8 +24,8 @@ const MAX_USER_RECENT_MESSAGES = 3;
 const MAX_USER_SCAN_CHANNELS = 20;
 const COOLDOWN_NOTICE_MS = 5_000;
 const GEMINI_TIMEOUT_MS = 30_000;
-const MAX_USER_MEMORIES_IN_CONTEXT = 6;
-const MAX_GUILD_MEMORIES_IN_CONTEXT = 2;
+const MAX_USER_MEMORIES_IN_CONTEXT = 10;
+const MAX_GUILD_MEMORIES_IN_CONTEXT = 10;
 const SLEEPING_GIF_PATH = path.join(__dirname, "../../assets/sleeping.gif");
 const TIRED_IMAGE_PATH = path.join(__dirname, "../../assets/tired.png");
 const RESPONSE_CONTRACT = [
@@ -610,6 +610,7 @@ async function generateGeminiResponse(
       return {
         content,
         model,
+        finishReason: payload.candidates?.[0]?.finishReason ?? null,
         inputTokens: payload.usageMetadata?.promptTokenCount ?? null,
         outputTokens: payload.usageMetadata?.candidatesTokenCount ?? null,
         thinkingTokens: payload.usageMetadata?.thoughtsTokenCount ?? null,

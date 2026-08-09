@@ -1,26 +1,30 @@
 const { generateGeminiResponse } = require("#modules/ai");
 
 const MEMORY_CONTEXT_MESSAGES = 8;
-const MAX_CONTEXT_MESSAGE_LENGTH = 800;
+const MAX_NEARBY_MESSAGE_LENGTH = 800;
+const MAX_SELECTED_MESSAGE_LENGTH = 12_000;
 const MAX_MEMORY_CONTEXT_GAP_MS = 2 * 60 * 60 * 1_000;
+const MAX_EXTRACTED_MEMORIES = 10;
 const USER_MEMORY_EXTRACTION_PROMPT = [
-  "Extract one concise, durable memory about the selected Discord message's author.",
+  `Extract every distinct, durable memory supported by the selected Discord message, up to ${MAX_EXTRACTED_MEMORIES} memories, about its author.`,
   "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to attribute another speaker's statement to the selected author.",
+  "Keep closely related details together when they fit. Split independent facts or dense structured content across multiple memories so useful supported details are not discarded merely for brevity.",
   "Preserve useful specifics such as names, preferences, relationships, titles, quantities, and ongoing projects. Summarize rather than quoting the conversation.",
-  "Create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters.",
-  "Set should_save to false when the selected message contains no meaningful claim, is only a question with no answer from its author, would require guessing, or contains credentials, authentication secrets, exact private addresses, or similarly dangerous private data.",
+  "For each memory, create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters. When several memories concern one subject, repeat useful subject words in their keys so they can be retrieved together.",
+  "Return an empty memories array when the selected message contains no meaningful claim, is only a question with no answer from its author, would require guessing, or contains credentials, authentication secrets, exact private addresses, or similarly dangerous private data.",
   "A joke or shared event may be saved when the user deliberately selected it, but describe it accurately as a joke or event instead of converting it into a factual personal trait.",
 ].join("\n");
 const SERVER_MEMORY_EXTRACTION_PROMPT = [
-  "Extract one concise, durable memory about this Discord server or its community.",
+  `Extract every distinct, durable memory supported by the selected Discord message, up to ${MAX_EXTRACTED_MEMORIES} memories, about this Discord server or its community.`,
   "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to turn one member's personal preference or biography into a server-wide fact.",
   "Good server memories include local terminology, ongoing community projects, traditions, channel purposes, and established bot or server lore. Do not save temporary chatter, individual preferences, moderation secrets, or claims that require guessing.",
+  "Keep closely related details together when they fit. Split independent facts or dense structured content across multiple memories so useful supported details are not discarded merely for brevity.",
   "Preserve useful specifics such as names, titles, quantities, and established meanings. Summarize rather than quoting the conversation.",
-  "Create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters.",
-  "Set should_save to false when the selected message contains no meaningful server knowledge or contains credentials, authentication secrets, exact private addresses, private moderation information, or similarly dangerous private data.",
+  "For each memory, create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters. When several memories concern one subject, repeat useful subject words in their keys so they can be retrieved together.",
+  "Return an empty memories array when the selected message contains no meaningful server knowledge or contains credentials, authentication secrets, exact private addresses, private moderation information, or similarly dangerous private data.",
 ].join("\n");
 
-function formatMemoryContextContent(message) {
+function formatMemoryContextContent(message, maximumLength) {
   const messageText = message.author?.id === message.client.user.id
     ? message.content.replace(/\n-# Model ».*$/s, "")
     : message.cleanContent || message.content;
@@ -40,9 +44,9 @@ function formatMemoryContextContent(message) {
     .trim();
 
   if (!content) return "[no text]";
-  return content.length <= MAX_CONTEXT_MESSAGE_LENGTH
+  return content.length <= maximumLength
     ? content
-    : `${content.slice(0, MAX_CONTEXT_MESSAGE_LENGTH - 1)}…`;
+    : `${content.slice(0, maximumLength - 1)}…`;
 }
 
 function formatMemoryContextMessage(message, selectedMessageId) {
@@ -60,7 +64,12 @@ function formatMemoryContextMessage(message, selectedMessageId) {
       ? `  reply_to_message_id: ${JSON.stringify(message.reference.messageId)}`
       : null,
     "  content: |-",
-    ...formatMemoryContextContent(message).split("\n").map((line) => `    ${line}`),
+    ...formatMemoryContextContent(
+      message,
+      message.id === selectedMessageId
+        ? MAX_SELECTED_MESSAGE_LENGTH
+        : MAX_NEARBY_MESSAGE_LENGTH,
+    ).split("\n").map((line) => `    ${line}`),
   ].filter(Boolean).join("\n");
 }
 
@@ -114,35 +123,64 @@ async function extractAiMemory(targetMessage, scope) {
     scope === "user" ? USER_MEMORY_EXTRACTION_PROMPT : SERVER_MEMORY_EXTRACTION_PROMPT,
     {
       generationConfig: {
-        maxOutputTokens: 300,
+        maxOutputTokens: 2_048,
         temperature: 0.1,
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
         responseMimeType: "application/json",
-        responseJsonSchema: {
+        responseSchema: {
           type: "object",
-          additionalProperties: false,
           properties: {
-            should_save: { type: "boolean" },
-            key: { type: "string" },
-            value: { type: "string" },
+            memories: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  key: { type: "string" },
+                  value: { type: "string" },
+                },
+                required: ["key", "value"],
+              },
+            },
           },
-          required: ["should_save", "key", "value"],
+          required: ["memories"],
         },
       },
     },
   );
 
-  let memory;
+  const responseText = response.content.trim();
+  if (!responseText) {
+    const finishReason = response.finishReason ? ` (finish reason: ${response.finishReason})` : "";
+    throw new Error(`Gemini returned empty memory data${finishReason}.`);
+  }
+
+  let extraction;
   try {
-    memory = JSON.parse(response.content);
+    extraction = JSON.parse(responseText.replace(/^```(?:json)?\s*|\s*```$/gi, ""));
   } catch {
     throw new Error("Gemini returned invalid memory data.");
   }
-  if (!memory.should_save) return null;
-  if (typeof memory.key !== "string" || typeof memory.value !== "string") {
+
+  if (!Array.isArray(extraction?.memories)) {
     throw new Error("Gemini returned incomplete memory data.");
   }
 
-  return { key: memory.key, value: memory.value };
+  const memories = extraction.memories.slice(0, MAX_EXTRACTED_MEMORIES).map((memory) => ({
+    key: typeof memory?.key === "string" ? memory.key.trim() : "",
+    value: typeof memory?.value === "string" ? memory.value.trim() : "",
+  }));
+  if (memories.some((memory) => (
+    !/[a-z0-9]/i.test(memory.key)
+    || memory.key.length > 50
+    || !memory.value
+    || memory.value.length > 500
+  ))) {
+    throw new Error("Gemini returned invalid memory fields.");
+  }
+
+  return memories;
 }
 
 module.exports = { extractAiMemory };
