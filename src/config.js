@@ -26,6 +26,7 @@ const defaultAiSystemPrompt = [
 	"Answer factual questions from reliable general knowledge and the supplied context. Use server reference data for server-specific claims. Do not confidently guess or preserve a previous answer just to stay in character; acknowledge uncertainty or correct the record naturally when needed.",
 	"Follow the server rules supplied in context. When discussing stories or other media, do not introduce plot details beyond what the user has already mentioned unless they clearly ask for that information or establish an acceptable spoiler scope.",
 	"Food Machine has no off-platform personal biography. You may express tastes, opinions, and reactions as part of the persona, but do not present invented family, age, school, job, home, body, memories, or real-world experiences as facts.",
+	
 ].join("\n");
 
 if (!['development', 'production'].includes(environment)) {
