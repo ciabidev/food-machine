@@ -28,7 +28,12 @@ module.exports = {
     try {
       result = await interaction.client.modules.ai.handleMessage(
         interaction.targetMessage,
-        { force: true, throwOnError: true },
+        {
+          force: true,
+          requesterId: interaction.user.id,
+          requesterMember: interaction.member,
+          throwOnError: true,
+        },
       );
     } catch (error) {
       console.error("Failed to ask AI from a message context command:", error);

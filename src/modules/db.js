@@ -380,6 +380,35 @@ async function addAiSampleMessages(guildId, sampleMessages) {
   });
 }
 
+async function saveAiMessageStats(messageId, guildId, channelId, stats) {
+  return db.collection("ai_message_stats").updateOne(
+    { _id: String(messageId) },
+    {
+      $set: {
+        guild_id: String(guildId),
+        channel_id: String(channelId),
+        requester_id: String(stats.requesterId),
+        model: stats.model,
+        response_time_ms: stats.responseTimeMs,
+        input_tokens: stats.inputTokens,
+        output_tokens: stats.outputTokens,
+        thinking_tokens: stats.thinkingTokens,
+        total_tokens: stats.totalTokens,
+        context_text: stats.contextText,
+        created_at: new Date(),
+      },
+    },
+    { upsert: true },
+  );
+}
+
+async function getAiMessageStats(messageId, guildId) {
+  return db.collection("ai_message_stats").findOne({
+    _id: String(messageId),
+    guild_id: String(guildId),
+  });
+}
+
 async function setBubbleChannelPrefix(guildId, channelPrefix) {
   if (typeof channelPrefix !== "string" || channelPrefix.length > 25) {
     throw new RangeError("Bubble channel prefix must be 25 characters or fewer.");
@@ -734,6 +763,8 @@ module.exports = {
   setAiSystemPrompt,
   setAiRulesChannel,
   addAiSampleMessages,
+  saveAiMessageStats,
+  getAiMessageStats,
   setLevelingXpRange,
   setLevelingCooldown,
   setLevelingChannels,
