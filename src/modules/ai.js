@@ -513,7 +513,11 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
   };
 }
 
-async function generateGeminiReply(messages, systemPrompt) {
+async function generateGeminiResponse(
+  messages,
+  systemPrompt,
+  { runtimeBoundaries = null, generationConfig = {} } = {},
+) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   const contents = [];
@@ -565,13 +569,16 @@ async function generateGeminiReply(messages, systemPrompt) {
             system_instruction: {
               parts: [
                 {
-                  text: `${systemPrompt}\n\n# Runtime boundaries\n${RESPONSE_CONTRACT}`,
+                  text: runtimeBoundaries
+                    ? `${systemPrompt}\n\n# Runtime boundaries\n${runtimeBoundaries}`
+                    : systemPrompt,
                 },
               ],
             },
             contents,
             generationConfig: {
               maxOutputTokens: 8_192,
+              ...generationConfig,
             },
           }),
           signal: controller.signal,
@@ -611,6 +618,12 @@ async function generateGeminiReply(messages, systemPrompt) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function generateGeminiReply(messages, systemPrompt) {
+  return generateGeminiResponse(messages, systemPrompt, {
+    runtimeBoundaries: RESPONSE_CONTRACT,
+  });
 }
 
 async function handleMessage(
@@ -973,5 +986,6 @@ async function handleMessage(
 
 module.exports = {
   handleMessage,
+  generateGeminiResponse,
   generateGeminiReply,
 };

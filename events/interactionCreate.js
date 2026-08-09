@@ -45,53 +45,6 @@ module.exports = {
     const command = interaction.client.commands.get(interaction.commandName);
     const db = interaction.client.modules.db;
 
-    if (interaction.customId?.startsWith("ai:memory:message:") && interaction.isModalSubmit()) {
-      try {
-        const [, , , channelId, messageId, subjectUserId] = interaction.customId.split(":");
-        const canManageGuild = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
-        if (!interaction.inGuild() || (subjectUserId !== interaction.user.id && !canManageGuild)) {
-          await interaction.reply({
-            content: "You cannot save a memory for that user.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-        const sourceMessage = channel?.isTextBased()
-          ? await channel.messages.fetch(messageId).catch(() => null)
-          : null;
-        if (!sourceMessage || sourceMessage.author.id !== subjectUserId || sourceMessage.author.bot) {
-          await interaction.reply({
-            content: "The source message is no longer available.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        const memory = await db.saveAiMemory(
-          interaction.guildId,
-          "user",
-          subjectUserId,
-          interaction.fields.getTextInputValue("memory-key"),
-          interaction.fields.getTextInputValue("memory-value"),
-          {
-            channelId,
-            messageId,
-            createdByUserId: interaction.user.id,
-          },
-        );
-        await interaction.reply({
-          content: `Remembered \`${memory.key}\`: ${memory.value}`,
-          flags: MessageFlags.Ephemeral,
-          allowedMentions: { parse: [] },
-        });
-      } catch (error) {
-        await replyWithError(interaction, error);
-      }
-      return;
-    }
-
     if (interaction.customId === "ai:systemprompt" && interaction.isModalSubmit()) {
       try {
         if (

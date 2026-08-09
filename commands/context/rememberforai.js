@@ -1,13 +1,11 @@
 const {
   ApplicationCommandType,
   ContextMenuCommandBuilder,
-  LabelBuilder,
   MessageFlags,
-  ModalBuilder,
   PermissionFlagsBits,
-  TextInputBuilder,
-  TextInputStyle,
 } = require("discord.js");
+const { extractAiMemory } = require("#modules/aiMemory");
+const { aiAllowedGuildIds } = require("#config");
 
 module.exports = {
   data: new ContextMenuCommandBuilder()
@@ -18,6 +16,13 @@ module.exports = {
   async execute(interaction) {
     const targetMessage = interaction.targetMessage;
     const canManageGuild = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (aiAllowedGuildIds.size && !aiAllowedGuildIds.has(interaction.guildId)) {
+      await interaction.reply({
+        content: "AI features are not available in this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
     if (targetMessage.author.bot) {
       await interaction.reply({
         content: "Bot messages cannot be saved as user memories.",
@@ -33,44 +38,53 @@ module.exports = {
       return;
     }
 
-    const messageText = targetMessage.content.trim();
-    if (!messageText) {
+    if (!targetMessage.content.trim()) {
       await interaction.reply({
         content: "That message has no text to remember.",
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
+    const settings = await interaction.client.modules.db.getSettings(interaction.guildId);
+    if (!settings.ai.memory_enabled) {
+      await interaction.reply({
+        content: "AI memory is disabled in this server.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
 
-    await interaction.showModal(
-      new ModalBuilder()
-        .setCustomId(
-          `ai:memory:message:${targetMessage.channelId}:${targetMessage.id}:${targetMessage.author.id}`,
-        )
-        .setTitle("Remember for AI")
-        .addLabelComponents(
-          new LabelBuilder()
-            .setLabel("Memory key")
-            .setDescription("A stable label, such as favorite_straw_hat.")
-            .setTextInputComponent(
-              new TextInputBuilder()
-                .setCustomId("memory-key")
-                .setStyle(TextInputStyle.Short)
-                .setMaxLength(50)
-                .setRequired(true),
-            ),
-          new LabelBuilder()
-            .setLabel("Memory")
-            .setDescription("Edit this into a durable fact, not a temporary event or joke.")
-            .setTextInputComponent(
-              new TextInputBuilder()
-                .setCustomId("memory-value")
-                .setStyle(TextInputStyle.Paragraph)
-                .setValue(messageText.slice(0, 500))
-                .setMaxLength(500)
-                .setRequired(true),
-            ),
-        ),
-    );
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const extractedMemory = await extractAiMemory(targetMessage);
+      if (!extractedMemory) {
+        await interaction.editReply(
+          "I couldn't find a safe, meaningful memory in that message and its nearby context.",
+        );
+        return;
+      }
+
+      const memory = await interaction.client.modules.db.saveAiMemory(
+        interaction.guildId,
+        "user",
+        targetMessage.author.id,
+        extractedMemory.key,
+        extractedMemory.value,
+        {
+          channelId: targetMessage.channelId,
+          messageId: targetMessage.id,
+          createdByUserId: interaction.user.id,
+        },
+      );
+      await interaction.editReply({
+        content: `Remembered \`${memory.key}\`: ${memory.value}`,
+        allowedMentions: { parse: [] },
+      });
+    } catch (error) {
+      console.error("Failed to extract an AI memory:", error);
+      await interaction.editReply(
+        "I couldn't create a memory from that message. Please try again in a bit.",
+      );
+    }
   },
 };
