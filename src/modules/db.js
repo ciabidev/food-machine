@@ -535,13 +535,15 @@ async function getAiMemories(guildId, scope, userId) {
 async function getAiMemoriesForContext(guildId, userId) {
   const collection = db.collection("ai_memories");
   const normalizedGuildId = String(guildId);
-  const normalizedUserId = String(userId);
+  const userMemoryQuery = userId
+    ? collection
+        .find({ guild_id: null, scope: "user", subject_id: String(userId) })
+        .sort({ updated_at: -1 })
+        .limit(MAX_USER_AI_MEMORIES)
+        .toArray()
+    : Promise.resolve([]);
   const [userMemories, guildMemories] = await Promise.all([
-    collection
-      .find({ guild_id: null, scope: "user", subject_id: normalizedUserId })
-      .sort({ updated_at: -1 })
-      .limit(MAX_USER_AI_MEMORIES)
-      .toArray(),
+    userMemoryQuery,
     collection
       .find({ guild_id: normalizedGuildId, scope: "guild", subject_id: null })
       .sort({ updated_at: -1 })

@@ -2,6 +2,7 @@ const { generateGeminiResponse } = require("#modules/ai");
 
 const MEMORY_CONTEXT_MESSAGES = 8;
 const MAX_CONTEXT_MESSAGE_LENGTH = 800;
+const MAX_MEMORY_CONTEXT_GAP_MS = 2 * 60 * 60 * 1_000;
 const USER_MEMORY_EXTRACTION_PROMPT = [
   "Extract one concise, durable memory about the selected Discord message's author.",
   "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to attribute another speaker's statement to the selected author.",
@@ -68,9 +69,19 @@ async function collectMemoryContext(targetMessage) {
     limit: MEMORY_CONTEXT_MESSAGES,
     before: targetMessage.id,
   }).catch(() => null);
-  const nearbyMessages = fetched
+  const fetchedMessages = fetched
     ? [...fetched.values()].sort((left, right) => left.createdTimestamp - right.createdTimestamp)
     : [];
+  let activeContextStart = 0;
+  let nextMessageTimestamp = targetMessage.createdTimestamp;
+  for (let index = fetchedMessages.length - 1; index >= 0; index -= 1) {
+    if (nextMessageTimestamp - fetchedMessages[index].createdTimestamp > MAX_MEMORY_CONTEXT_GAP_MS) {
+      activeContextStart = index + 1;
+      break;
+    }
+    nextMessageTimestamp = fetchedMessages[index].createdTimestamp;
+  }
+  const nearbyMessages = fetchedMessages.slice(activeContextStart);
   const replyTarget = targetMessage.reference?.messageId
     ? await targetMessage.fetchReference().catch(() => null)
     : null;

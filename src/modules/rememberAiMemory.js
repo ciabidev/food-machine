@@ -12,9 +12,9 @@ module.exports = async function saveMessageAsAiMemory(interaction, scope) {
     });
     return;
   }
-  if (targetMessage.author.bot) {
+  if (targetMessage.author.id === interaction.client.user.id) {
     await interaction.reply({
-      content: "Bot messages cannot be saved as AI memories.",
+      content: "Food Machine's messages cannot be saved as AI memories.",
       flags: MessageFlags.Ephemeral,
     });
     return;

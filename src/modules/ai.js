@@ -98,6 +98,8 @@ function splitReplyText(content) {
 
 function selectRelevantMemories(memories, requestText, maximumMemories) {
   const ignoredWords = new Set([
+    "an", "as", "at", "be", "by", "do", "he", "if", "in", "is", "it", "me",
+    "my", "of", "on", "or", "so", "to", "up", "we",
     "about", "after", "again", "also", "been", "does", "from", "have", "just",
     "know", "like", "that", "their", "them", "then", "there", "they", "this",
     "what", "when", "where", "which", "with", "would", "your", "youre",
@@ -105,7 +107,7 @@ function selectRelevantMemories(memories, requestText, maximumMemories) {
   const tokenize = (value) => new Set(
     String(value ?? "")
       .toLowerCase()
-      .match(/[a-z0-9]{3,}/g)
+      .match(/[a-z0-9]{2,}/g)
       ?.filter((word) => !ignoredWords.has(word)) || [],
   );
   const requestTokens = tokenize(requestText);
@@ -663,10 +665,13 @@ async function handleMessage(
   const settings = await message.client.modules.db.getSettings(message.guildId);
   if (!settings.ai.enabled) return { status: "disabled" };
 
+  const memoryUserId = force && requesterId !== message.author.id
+    ? null
+    : message.author.id;
   const memories = settings.ai.memory_enabled
     ? await message.client.modules.db.getAiMemoriesForContext(
         message.guildId,
-        message.author.id,
+        memoryUserId,
       )
     : { userMemories: [], guildMemories: [] };
 
