@@ -71,12 +71,7 @@ The root command is available to regular members because personal memory control
 | `/ai systemprompt` | Manage Server | Opens a modal to replace the guild system prompt. Submitting it blank restores the default. Maximum 4,000 characters. |
 | `/ai ruleschannel` | Manage Server | Selects a text or announcement channel. Leaving it empty uses Discord's configured rules channel. |
 | `/ai samplemessages` | Manage Server | Opens the sample-message control panel. |
-| `/ai memory enable` | Manage Server | Allows saved memories to be used in this guild. Does not delete records. |
-| `/ai memory disable` | Manage Server | Stops memory use in this guild. Does not delete records. |
-| `/ai memory view` | Owner; server scope requires Manage Server | Shows the newest ten memories in the selected scope. |
-| `/ai memory add` | Owner; server scope requires Manage Server | Manually adds or replaces a memory by key. |
-| `/ai memory forget` | Owner; server scope requires Manage Server | Deletes one autocompleted memory key. |
-| `/ai memory clear` | Owner; server scope requires Manage Server | Deletes all memories in the selected scope after an explicit confirmation option. |
+| `/ai memory` | Everyone | Opens the ephemeral Components V2 memory panel. Members manage their personal entries; Manage Server can switch to server memory and pause or enable memory for the guild. |
 
 ### Message context commands
 
@@ -88,7 +83,7 @@ The root command is available to regular members because personal memory control
 | `AI: Remember for Me` | Everyone | Extracts a global personal memory from the member's own selected message. |
 | `AI: Remember for Server` | Manage Server | Extracts shared server knowledge from a selected human message. |
 
-Discord message context commands cannot have descriptions or options. The command loader also skips both subcommand and subcommand-group builders so `/ai memory` is not accidentally deployed as a top-level context command.
+Discord message context commands cannot have descriptions or options. `/ai memory` is an ordinary `/ai` subcommand; memory management happens through its component interactions rather than nested slash subcommands.
 
 ## Request lifecycle
 
@@ -101,9 +96,11 @@ For a normal response, the bot:
 5. Downloads and optimizes eligible images.
 6. Sends the system prompt, runtime boundaries, text context, and image parts to Gemini.
 7. Tries the fallback model only if the primary returns HTTP 429 or 503.
-8. Renders a normal reply or a code-constructed food card.
-9. Saves model, latency, token counts, requester, and the system-prompt-free request context.
-10. Starts the channel cooldown even when processing fails.
+8. Removes and validates any private personal-memory mutation block.
+9. Renders a normal reply or a code-constructed food card.
+10. Saves model, latency, token counts, requester, and the system-prompt-free request context.
+11. Applies valid personal-memory mutations after the Discord response succeeds.
+12. Starts the channel cooldown even when processing fails.
 
 Only one AI request may run in a channel at a time. Typing indicators are best effort.
 
@@ -257,6 +254,7 @@ Personal memory belongs to one Discord user and follows that user across every s
 - `AI: Remember for Me` only accepts a message authored by the person invoking it.
 - Personal memories are only loaded when their owner invokes the AI normally or asks it about their own selected message.
 - A context-menu Ask action on someone else's message intentionally loads no personal memory.
+- During an ordinary conversation, Gemini can create, update, or explicitly delete durable memories for the current author through a private response sidecar. The sidecar is part of the existing reply call and is removed before Discord output, so this does not add another Gemini request.
 - Maximum: 100 memories per user.
 
 ### Server memory
@@ -266,11 +264,37 @@ Server memory is shared reference knowledge for one guild. It is suitable for st
 - Manage Server is required to create, view, edit, forget, or clear it.
 - It must not turn an individual's preference or biography into a guild fact.
 - It remains inside the guild where it was saved.
+- Ordinary members cannot change shared server memory through conversation. Server mutations require the administrator-only Remember context action or memory commands.
 - Maximum: 200 memories per guild.
 
-“Server-wide” means shared with AI requests in that server, not public to other servers and not an automatic transcript of the server. Nothing is remembered automatically during normal chat.
+“Server-wide” means shared with AI requests in that server, not public to other servers and not an automatic transcript of the server.
 
-### Automatic extraction from a selected message
+### Categorized entries and mutation behavior
+
+Each memory is an individual categorized entry with a stable MongoDB `_id`, human-readable title, self-contained content, source message metadata, and extracted Discord references. Categories are `identity`, `preferences`, `relationships`, `projects`, `roles`, `procedures`, `server_info`, `communication`, and `other`.
+
+New information is represented as database mutations:
+
+- `create` adds a subject that has no existing entry;
+- `update` targets an exact `_id` when information adds detail, corrects, replaces, or contradicts that entry;
+- `delete` targets an exact `_id` only after an explicit request to forget or remove the information.
+
+Titles are limited to 100 characters and content to 2,000 characters. Creating a memory with the same normalized title and owner updates the existing entry. The old generated `key` remains an internal compatibility field and is no longer the user-facing identity.
+
+### Memory control panel
+
+`/ai memory` opens an ephemeral Components V2 panel showing three complete categorized entries per page. Every entry is rendered as a `SectionBuilder` with its own Delete accessory button. The panel also provides:
+
+- personal/server scope switching for members with Manage Server;
+- Previous and Next pagination;
+- an Add modal with category, title, and content fields;
+- one Correct button whose single prompt can create, update, or delete every relevant entry through one structured Gemini call;
+- a confirmed Clear all action;
+- a guild-wide pause/enable button for members with Manage Server.
+
+Delete, Add, Clear, and correction operations refresh the original panel and show a compact result notice. Personal operations always target the interacting member. Server controls re-check Manage Server on every interaction instead of trusting button visibility.
+
+### Explicit extraction from a selected message
 
 The two Remember context actions do not open a modal. They:
 
@@ -279,26 +303,26 @@ The two Remember context actions do not open a modal. They:
 3. discard earlier context separated by more than two hours;
 4. add the selected message's direct reply target when available;
 5. serialize author IDs, usernames, display names, reply references, and compact text;
-6. ask Gemini at temperature 0.1 for structured JSON containing zero to twenty `key` and `value` memories;
-7. for a selected message of at least 1,000 characters or twelve lines, run a second structured coverage audit that returns only durable source details missing from the initial extraction;
-8. directly save or upsert each extracted memory in the database.
+6. load an index of existing entries in the target scope plus full details for the most lexically relevant entries;
+7. ask Gemini once at temperature 0.1 for structured `create`, `update`, and `delete` mutations, with at most thirty total changes;
+8. validate every category, title, content value, and target ID before applying direct database writes.
 
-The selected message has a 12,000-character extraction budget, while each nearby context message remains limited to 800 characters. Extraction does not load the full conversational prompt, rules, samples, images, or existing memory. This preserves the authoritative source without allowing neighboring context to dominate the request.
+The selected message has a 12,000-character extraction budget, while each nearby context message remains limited to 800 characters. Extraction does not load the full conversational prompt, rules, samples, or images. It receives existing memory titles and IDs so it can update facts instead of producing contradictory duplicates; up to thirty lexically related entries include their full content.
 
-Gemini is instructed to preserve useful specifics while rejecting meaningless, speculative, improperly scoped, or dangerously private content. Credentials, authentication secrets, exact private addresses, and similar data should produce an empty memory list. Closely related details may remain together, while independent facts or dense structured content are split across memories so useful supported details are not discarded merely for brevity. A deliberately selected joke or shared event may be saved when accurately labeled as such.
-
-Keys are normalized to lowercase snake_case, must contain a letter or number, and are limited to 50 characters. Values are limited to 500 characters each. Saving the same scope/owner/key updates the existing record rather than creating a duplicate.
+Gemini is instructed to inspect the complete selected message line by line, preserve useful specifics, keep one coherent subject per entry, and split independently named roles, people, procedures, projects, or concepts. It rejects meaningless, speculative, improperly scoped, or dangerously private content. Raw Discord mention syntax is preserved so IDs remain authoritative and readable names can be resolved later.
 
 ### Retrieval
 
-Memory retrieval is intentionally simple and direct; there is no embedding service, vector database, cache, background summarizer, or automatic memory writer.
+Memory retrieval is intentionally simple and direct; there is no embedding service, vector database, cache, background summarizer, or past-chat search.
 
-For each request, the database fetches the current author's global personal records and the current guild's shared records. A lexical scorer tokenizes the current message plus direct reply content, ignores common filler words, and weights key matches more heavily than value matches. To prevent a weak generic word from pulling unrelated facts into the prompt, only records scoring at least half as highly as the best match are eligible. When several records tie at the weakest possible one-word value match, none are injected unless the user explicitly asks what the bot remembers. It injects at most:
+For each request, the database fetches the current author's global personal entries and the current guild's shared entries. A lexical scorer tokenizes the current message plus direct reply content, ignores common filler words, and weights title, category, and legacy-key matches more heavily than content matches. To prevent a weak generic word from pulling unrelated facts into the prompt, only entries scoring at least half as highly as the best match are eligible. When several entries tie at the weakest possible one-word content match, none are injected unless the user explicitly asks what the bot remembers. It injects at most:
 
 - ten relevant personal memories;
 - ten relevant server memories.
 
-Memory keys are used only by the lexical scorer and are not shown to Gemini. Selected values are supplied as natural reference facts. Discord user, role, and channel IDs inside those values are resolved from current guild caches and represented with both a readable name and Discord mention syntax. AI output keeps `allowedMentions: { parse: [] }`, so a returned mention renders normally without notifying its target.
+Selected content is supplied as natural reference facts. Discord user, role, and channel IDs inside that content are resolved from current guild caches and represented with both a readable name and Discord mention syntax. AI output keeps `allowedMentions: { parse: [] }`, so a returned mention renders normally without notifying its target.
+
+The same relevant personal entries are also supplied with IDs, categories, titles, and content for real-time maintenance. Gemini may return a delimited private JSON block with `create`, `update`, and `delete` arrays. The application strips this block before food-card parsing or reply rendering, validates it, and applies it only to the current author's global personal scope. Malformed mutation data is ignored without failing the visible reply.
 
 Two-character terms are retained so acronyms can match. Questions such as “what do you remember about me?” make recent memories eligible even without a keyword overlap. The prompt says memories may be stale, direct current statements win, and unrelated memories must not become recurring callbacks.
 
@@ -390,13 +414,15 @@ AI configuration is nested under `guild_settings.ai`:
 }
 ```
 
-The `ai_memories` collection uses a unique compound index on:
+The `ai_memories` collection retains a unique compatibility index on:
 
 ```text
 guild_id + scope + subject_id + key
 ```
 
-Personal records use `guild_id: null`; server records use the real guild ID and `subject_id: null`. Records also retain source guild/channel/message IDs, creator ID, and creation/update timestamps. Memories do not expire automatically.
+Personal records use `guild_id: null`; server records use the real guild ID and `subject_id: null`. The MongoDB `_id` is the stable mutation and command target. Records store category, title, normalized title, content, structured Discord references, source guild/channel/message IDs, creator ID, and creation/update timestamps. The legacy key/value fields remain synchronized for compatibility. Memories do not expire automatically.
+
+At initialization, older key/value records are directly migrated in place to category `other`, a title derived from the key, and content copied from the value. Older guild-scoped personal memories remain untouched as described above.
 
 The `ai_message_stats` collection is keyed by the Discord response message ID and additionally records the guild ID for scoped lookup.
 
@@ -425,7 +451,9 @@ Important boundaries:
 | `src/modules/ai.js` | Invocation, context assembly, Gemini calls, fallback, output, errors, and stats. |
 | `src/modules/loadImageParts.js` | Image download, validation, resize, WebP conversion, and GIF frame sampling. |
 | `src/modules/aiFoodCard.js` | Food contract parsing, optional Unsplash lookup, and Components V2 rendering. |
-| `src/modules/aiMemory.js` | Focused context collection and Gemini memory extraction. |
+| `src/modules/aiMemory.js` | Focused context collection and explicit Gemini memory-mutation extraction. |
+| `src/modules/aiMemoryConstants.js` | Shared memory categories, limits, and mutation validation. |
+| `src/modules/aiMemoryPanel.js` | Components V2 memory panel, modals, pagination, scope controls, and component handling. |
 | `src/modules/rememberAiMemory.js` | Context-command authorization, extraction orchestration, and save response. |
 | `src/modules/aiSampleMessagesPanel.js` | Paginated sample-message Components V2 interface. |
 | `src/modules/db.js` | Persisted defaults, settings, stats, samples, and memory CRUD/indexes. |
@@ -489,7 +517,7 @@ These failures have already occurred during development:
 ## Known limitations and intentional non-features
 
 - The model has no web search or automatic live trend feed. Current voice comes from maintained server samples.
-- Memory is explicit, not automatically inferred from every conversation.
+- Automatic memory maintenance only considers messages that directly invoke the AI; the bot does not scan or summarize unrelated server conversations in the background.
 - Memory relevance is lexical rather than semantic embedding search.
 - Existing legacy guild-scoped personal memories are not migrated.
 - Rules are only as accurate as the configured channel content and permissions allow.

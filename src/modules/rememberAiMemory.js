@@ -1,6 +1,6 @@
 const { MessageFlags, PermissionFlagsBits } = require("discord.js");
 const { aiAllowedGuildIds } = require("#config");
-const { extractAiMemory } = require("#modules/aiMemory");
+const { extractAiMemoryMutations } = require("#modules/aiMemory");
 
 module.exports = async function saveMessageAsAiMemory(interaction, scope) {
   const targetMessage = interaction.targetMessage;
@@ -45,35 +45,46 @@ module.exports = async function saveMessageAsAiMemory(interaction, scope) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
-    const extractedMemories = await extractAiMemory(targetMessage, scope);
-    if (!extractedMemories.length) {
+    const memoryUserId = serverMemory ? null : interaction.user.id;
+    const existingMemories = await interaction.client.modules.db.getAiMemories(
+      interaction.guildId,
+      scope,
+      memoryUserId,
+    );
+    const mutations = await extractAiMemoryMutations(
+      targetMessage,
+      scope,
+      existingMemories,
+    );
+    if (!mutations.create.length && !mutations.update.length && !mutations.delete.length) {
       await interaction.editReply(
-        `I couldn't find a safe, meaningful ${serverMemory ? "server" : "personal"} memory in that message and its nearby context.`,
+        `I couldn't find any safe, durable ${serverMemory ? "server" : "personal"} memory changes in that message.`,
       );
       return;
     }
 
-    const savedMemories = [];
-    for (const extractedMemory of extractedMemories) {
-      savedMemories.push(await interaction.client.modules.db.saveAiMemory(
-        interaction.guildId,
-        scope,
-        serverMemory ? null : interaction.user.id,
-        extractedMemory.key,
-        extractedMemory.value,
-        {
-          guildId: interaction.guildId,
-          channelId: targetMessage.channelId,
-          messageId: targetMessage.id,
-          createdByUserId: interaction.user.id,
-        },
-      ));
-    }
+    const result = await interaction.client.modules.db.applyAiMemoryMutations(
+      interaction.guildId,
+      scope,
+      memoryUserId,
+      mutations,
+      {
+        guildId: interaction.guildId,
+        channelId: targetMessage.channelId,
+        messageId: targetMessage.id,
+        createdByUserId: interaction.user.id,
+      },
+    );
 
     const destination = serverMemory ? "for this server" : "for you";
-    const content = savedMemories.length === 1
-      ? `Remembered ${destination} as \`${savedMemories[0].key}\`: ${savedMemories[0].value}`
-      : `Remembered ${savedMemories.length} memories ${destination}: ${savedMemories.map((memory) => `\`${memory.key}\``).join(", ")}`;
+    const changedMemories = [...result.created, ...result.updated];
+    const changes = [
+      result.created.length ? `${result.created.length} created` : null,
+      result.updated.length ? `${result.updated.length} updated` : null,
+      result.deletedCount ? `${result.deletedCount} deleted` : null,
+    ].filter(Boolean).join(", ");
+    const titles = changedMemories.map((memory) => `\`${memory.title}\``).join(", ");
+    const content = `Updated memory ${destination}: ${changes}${titles ? ` — ${titles}` : ""}`;
     await interaction.editReply({ content, allowedMentions: { parse: [] } });
   } catch (error) {
     console.error(`Failed to create AI ${scope} memories:`, error);

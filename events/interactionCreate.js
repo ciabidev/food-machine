@@ -21,6 +21,7 @@ const {
   aiSamplesPanel,
   clearSamplesConfirmation,
 } = require("#modules/aiSampleMessagesPanel");
+const { handleAiMemoryPanelInteraction } = require("#modules/aiMemoryPanel");
 const { issuesUrl } = require("#config");
 
 async function replyWithError(interaction, error) {
@@ -44,6 +45,15 @@ module.exports = {
   async execute(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
     const db = interaction.client.modules.db;
+
+    if (interaction.customId?.startsWith("ai:memory:")) {
+      try {
+        await handleAiMemoryPanelInteraction(interaction);
+      } catch (error) {
+        await replyWithError(interaction, error);
+      }
+      return;
+    }
 
     if (interaction.customId === "ai:systemprompt" && interaction.isModalSubmit()) {
       try {

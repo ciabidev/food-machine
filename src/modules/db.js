@@ -1,5 +1,11 @@
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 const { defaultAiSystemPrompt, environment, mongoUri } = require("#config");
+const {
+  AI_MEMORY_CATEGORIES,
+  MAX_AI_MEMORY_CONTENT_LENGTH,
+  MAX_AI_MEMORY_MUTATIONS,
+  MAX_AI_MEMORY_TITLE_LENGTH,
+} = require("#modules/aiMemoryConstants");
 
 const dbName = environment;
 
@@ -41,7 +47,6 @@ const MAX_AI_SAMPLE_LENGTH = 1_000;
 const MAX_USER_AI_MEMORIES = 100;
 const MAX_GUILD_AI_MEMORIES = 200;
 const MAX_AI_MEMORY_KEY_LENGTH = 50;
-const MAX_AI_MEMORY_VALUE_LENGTH = 500;
 
 let client;
 let db;
@@ -107,12 +112,46 @@ async function initDb() {
         { "ai.memory_enabled": { $exists: false } },
         { $set: { "ai.memory_enabled": DEFAULT_AI_SETTINGS.memory_enabled } },
       );
+      await db.collection("ai_memories").updateMany(
+        {
+          $or: [
+            { category: { $exists: false } },
+            { title: { $exists: false } },
+            { title_normalized: { $exists: false } },
+            { content: { $exists: false } },
+          ],
+        },
+        [
+          {
+            $set: {
+              category: { $ifNull: ["$category", "other"] },
+              title: {
+                $ifNull: [
+                  "$title",
+                  { $replaceAll: { input: "$key", find: "_", replacement: " " } },
+                ],
+              },
+              content: { $ifNull: ["$content", "$value"] },
+            },
+          },
+          {
+            $set: {
+              title_normalized: {
+                $toLower: { $trim: { input: "$title" } },
+              },
+            },
+          },
+        ],
+      );
       await db.collection("ai_memories").createIndex(
         { guild_id: 1, scope: 1, subject_id: 1, key: 1 },
         { unique: true },
       );
       await db.collection("ai_memories").createIndex(
         { guild_id: 1, scope: 1, subject_id: 1, updated_at: -1 },
+      );
+      await db.collection("ai_memories").createIndex(
+        { guild_id: 1, scope: 1, subject_id: 1, category: 1, updated_at: -1 },
       );
       return db;
     })().catch(async (error) => {
@@ -441,19 +480,53 @@ async function clearAiSampleMessages(guildId) {
   });
 }
 
-function prepareAiMemoryKey(key) {
-  const preparedKey = String(key ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+function prepareAiMemoryCategory(category) {
+  const preparedCategory = String(category ?? "other").trim().toLowerCase();
+  if (!AI_MEMORY_CATEGORIES.includes(preparedCategory)) {
+    throw new RangeError(`Unknown AI memory category: ${preparedCategory}`);
+  }
+  return preparedCategory;
+}
 
-  if (!preparedKey || preparedKey.length > MAX_AI_MEMORY_KEY_LENGTH) {
+function prepareAiMemoryTitle(title) {
+  const preparedTitle = String(title ?? "").replace(/\s+/g, " ").trim();
+  if (!preparedTitle || preparedTitle.length > MAX_AI_MEMORY_TITLE_LENGTH) {
     throw new RangeError(
-      `Memory keys must contain letters or numbers and be ${MAX_AI_MEMORY_KEY_LENGTH} characters or fewer.`,
+      `Memory titles must be between 1 and ${MAX_AI_MEMORY_TITLE_LENGTH} characters.`,
     );
   }
-  return preparedKey;
+  return preparedTitle;
+}
+
+function prepareAiMemoryContent(content) {
+  const preparedContent = String(content ?? "").trim();
+  if (!preparedContent || preparedContent.length > MAX_AI_MEMORY_CONTENT_LENGTH) {
+    throw new RangeError(
+      `Memory content must be between 1 and ${MAX_AI_MEMORY_CONTENT_LENGTH} characters.`,
+    );
+  }
+  return preparedContent;
+}
+
+function collectAiMemoryReferences(content) {
+  const references = new Map();
+  for (const match of content.matchAll(/<@&(\d+)>|<#(\d+)>|<@!?(\d+)>/g)) {
+    const type = match[1] ? "role" : match[2] ? "channel" : "user";
+    const id = match[1] || match[2] || match[3];
+    references.set(`${type}:${id}`, { type, id });
+  }
+  return [...references.values()];
+}
+
+function createAiMemoryKey(title, memoryId) {
+  const suffix = memoryId.toHexString().slice(-6);
+  const slug = String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, MAX_AI_MEMORY_KEY_LENGTH - suffix.length - 1)
+    || "memory";
+  return `${slug}_${suffix}`;
 }
 
 function prepareAiMemoryScope(scope, userId) {
@@ -474,55 +547,168 @@ function getAiMemoryOwner(guildId, scope, userId) {
   };
 }
 
-async function saveAiMemory(guildId, scope, userId, key, value, source = {}) {
+function prepareAiMemorySource(guildId, userId, source, now) {
+  const actingUserId = source.createdByUserId
+    ? String(source.createdByUserId)
+    : userId
+      ? String(userId)
+      : null;
+  return {
+    source_guild_id: source.guildId ? String(source.guildId) : String(guildId),
+    source_channel_id: source.channelId ? String(source.channelId) : null,
+    source_message_id: source.messageId ? String(source.messageId) : null,
+    updated_by_user_id: actingUserId,
+    updated_at: now,
+  };
+}
+
+async function createAiMemory(
+  guildId,
+  scope,
+  userId,
+  category,
+  title,
+  content,
+  source = {},
+) {
   const owner = getAiMemoryOwner(guildId, scope, userId);
-  const preparedKey = prepareAiMemoryKey(key);
-  const preparedValue = String(value ?? "").trim();
-  if (!preparedValue || preparedValue.length > MAX_AI_MEMORY_VALUE_LENGTH) {
+  const preparedCategory = prepareAiMemoryCategory(category);
+  const preparedTitle = prepareAiMemoryTitle(title);
+  const preparedContent = prepareAiMemoryContent(content);
+  const titleNormalized = preparedTitle.toLowerCase();
+
+  const collection = db.collection("ai_memories");
+  const existingMemory = await collection.findOne({ ...owner, title_normalized: titleNormalized });
+  if (existingMemory) {
+    const updatedMemory = await updateAiMemory(
+      guildId,
+      scope,
+      userId,
+      existingMemory._id,
+      preparedCategory,
+      preparedTitle,
+      preparedContent,
+      source,
+    );
+    return updatedMemory ? { ...updatedMemory, was_created: false } : null;
+  }
+
+  const memoryLimit = scope === "user" ? MAX_USER_AI_MEMORIES : MAX_GUILD_AI_MEMORIES;
+  const memoryCount = await collection.countDocuments(owner);
+  if (memoryCount >= memoryLimit) {
     throw new RangeError(
-      `Memory values must be between 1 and ${MAX_AI_MEMORY_VALUE_LENGTH} characters.`,
+      `${scope === "user" ? "This user" : "This server"} already has the maximum of ${memoryLimit} AI memories.`,
     );
   }
 
-  const collection = db.collection("ai_memories");
-  const filter = {
+  const now = new Date();
+  const memoryId = new ObjectId();
+  const document = {
+    _id: memoryId,
     ...owner,
-    key: preparedKey,
+    key: createAiMemoryKey(preparedTitle, memoryId),
+    category: preparedCategory,
+    title: preparedTitle,
+    title_normalized: titleNormalized,
+    content: preparedContent,
+    value: preparedContent,
+    references: collectAiMemoryReferences(preparedContent),
+    ...prepareAiMemorySource(guildId, userId, source, now),
+    created_by_user_id: source.createdByUserId
+      ? String(source.createdByUserId)
+      : userId
+        ? String(userId)
+        : null,
+    created_at: now,
   };
-  const existingMemory = await collection.findOne(filter, { projection: { _id: 1 } });
-  if (!existingMemory) {
-    const memoryLimit = scope === "user" ? MAX_USER_AI_MEMORIES : MAX_GUILD_AI_MEMORIES;
-    const memoryCount = await collection.countDocuments(owner);
-    if (memoryCount >= memoryLimit) {
-      throw new RangeError(
-        `${scope === "user" ? "This user" : "This server"} already has the maximum of ${memoryLimit} AI memories.`,
-      );
-    }
-  }
+  await collection.insertOne(document);
+  return { ...document, was_created: true };
+}
+
+async function updateAiMemory(
+  guildId,
+  scope,
+  userId,
+  memoryId,
+  category,
+  title,
+  content,
+  source = {},
+) {
+  const owner = getAiMemoryOwner(guildId, scope, userId);
+  const preparedCategory = prepareAiMemoryCategory(category);
+  const preparedTitle = prepareAiMemoryTitle(title);
+  const preparedContent = prepareAiMemoryContent(content);
+  const preparedMemoryId = ObjectId.isValid(String(memoryId))
+    ? new ObjectId(String(memoryId))
+    : null;
+  if (!preparedMemoryId) throw new RangeError("Invalid AI memory ID.");
 
   const now = new Date();
-  await collection.updateOne(
-    filter,
+  const result = await db.collection("ai_memories").findOneAndUpdate(
+    { _id: preparedMemoryId, ...owner },
     {
       $set: {
-        value: preparedValue,
-        source_guild_id: source.guildId ? String(source.guildId) : String(guildId),
-        source_channel_id: source.channelId ? String(source.channelId) : null,
-        source_message_id: source.messageId ? String(source.messageId) : null,
-        created_by_user_id: source.createdByUserId
-          ? String(source.createdByUserId)
-          : String(userId),
-        updated_at: now,
-      },
-      $setOnInsert: {
-        ...filter,
-        created_at: now,
+        key: createAiMemoryKey(preparedTitle, preparedMemoryId),
+        category: preparedCategory,
+        title: preparedTitle,
+        title_normalized: preparedTitle.toLowerCase(),
+        content: preparedContent,
+        value: preparedContent,
+        references: collectAiMemoryReferences(preparedContent),
+        ...prepareAiMemorySource(guildId, userId, source, now),
       },
     },
-    { upsert: true },
+    { returnDocument: "after" },
   );
+  return result;
+}
 
-  return collection.findOne(filter);
+async function applyAiMemoryMutations(guildId, scope, userId, mutations, source = {}) {
+  const created = [];
+  const updated = [];
+  let deletedCount = 0;
+  const mutationLimit = MAX_AI_MEMORY_MUTATIONS;
+
+  for (const memory of (mutations.create || []).slice(0, mutationLimit)) {
+    const savedMemory = await createAiMemory(
+      guildId,
+      scope,
+      userId,
+      memory.category,
+      memory.title,
+      memory.content,
+      source,
+    );
+    if (!savedMemory) continue;
+    if (savedMemory.was_created) created.push(savedMemory);
+    else updated.push(savedMemory);
+  }
+  for (const memory of (mutations.update || []).slice(
+    0,
+    mutationLimit - created.length - updated.length,
+  )) {
+    const updatedMemory = await updateAiMemory(
+      guildId,
+      scope,
+      userId,
+      memory.memory_id,
+      memory.category,
+      memory.title,
+      memory.content,
+      source,
+    );
+    if (updatedMemory) updated.push(updatedMemory);
+  }
+  for (const memoryId of (mutations.delete || []).slice(
+    0,
+    Math.max(0, mutationLimit - created.length - updated.length),
+  )) {
+    const result = await deleteAiMemory(guildId, scope, userId, memoryId);
+    deletedCount += result.deletedCount;
+  }
+
+  return { created, updated, deletedCount };
 }
 
 async function getAiMemories(guildId, scope, userId) {
@@ -553,10 +739,14 @@ async function getAiMemoriesForContext(guildId, userId) {
   return { userMemories, guildMemories };
 }
 
-async function deleteAiMemory(guildId, scope, userId, key) {
+async function deleteAiMemory(guildId, scope, userId, memoryId) {
+  const preparedMemoryId = ObjectId.isValid(String(memoryId))
+    ? new ObjectId(String(memoryId))
+    : null;
+  if (!preparedMemoryId) return { acknowledged: true, deletedCount: 0 };
   return db.collection("ai_memories").deleteOne({
     ...getAiMemoryOwner(guildId, scope, userId),
-    key: prepareAiMemoryKey(key),
+    _id: preparedMemoryId,
   });
 }
 
@@ -924,7 +1114,9 @@ module.exports = {
   saveAiMessageStats,
   getAiMessageStats,
   clearAiSampleMessages,
-  saveAiMemory,
+  createAiMemory,
+  updateAiMemory,
+  applyAiMemoryMutations,
   getAiMemories,
   getAiMemoriesForContext,
   deleteAiMemory,
