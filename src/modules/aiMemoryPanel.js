@@ -119,7 +119,7 @@ async function buildAiMemoryPanel(interaction, scope = "user", requestedPage = 0
           .setButtonAccessory(
             new ButtonBuilder()
               .setCustomId(`ai:memory:delete:${scope}:${memory._id}:${page}`)
-              .setLabel("Delete")
+              .setEmoji("✖️")
               .setStyle(ButtonStyle.Danger),
           ),
       );
@@ -142,26 +142,36 @@ async function buildAiMemoryPanel(interaction, scope = "user", requestedPage = 0
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`ai:memory:page:${scope}:${page - 1}`)
-          .setLabel("Previous")
           .setStyle(ButtonStyle.Secondary)
+          .setEmoji("⬅️")
           .setDisabled(page === 0),
         new ButtonBuilder()
+          .setCustomId(`ai:memory:jump:${scope}:${page}`)
+          .setLabel(`Page ${page + 1} of ${pageCount}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageCount === 1),
+        new ButtonBuilder()
           .setCustomId(`ai:memory:page:${scope}:${page + 1}`)
-          .setLabel("Next")
+          .setEmoji("➡️")
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(page >= pageCount - 1),
+      ),
+      new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`ai:memory:add:${scope}:${page}`)
           .setLabel("Add")
+          .setEmoji("➕")
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId(`ai:memory:correct:${scope}:${page}`)
           .setLabel("Correct")
+          .setEmoji("📝")
           .setStyle(ButtonStyle.Primary)
           .setDisabled(!memories.length),
         new ButtonBuilder()
           .setCustomId(`ai:memory:clear:${scope}:${page}`)
           .setLabel("Clear all")
+          .setEmoji("🗑️")
           .setStyle(ButtonStyle.Danger)
           .setDisabled(!memories.length),
       ),
@@ -230,6 +240,26 @@ function buildCorrectMemoryModal(scope, page) {
     );
 }
 
+function buildJumpToMemoryPageModal(scope, page, pageCount) {
+  return new ModalBuilder()
+    .setCustomId(`ai:memory:jump-modal:${scope}:${normalizePage(page)}`)
+    .setTitle("Jump to memory page")
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("Page number")
+        .setDescription(`Enter a page from 1 to ${pageCount}.`)
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId("memory-page")
+            .setStyle(TextInputStyle.Short)
+            .setValue(String(normalizePage(page) + 1))
+            .setPlaceholder("1")
+            .setMaxLength(String(pageCount).length)
+            .setRequired(true),
+        ),
+    );
+}
+
 function buildClearMemoryConfirmation(scope, page, memoryCount) {
   const scopeName = scope === "guild" ? "server" : "personal";
   return [
@@ -280,6 +310,12 @@ async function handleAiMemoryPanelInteraction(interaction) {
     }
     if (action === "correct") {
       await interaction.showModal(buildCorrectMemoryModal(scope, page));
+      return;
+    }
+    if (action === "jump") {
+      const memories = await db.getAiMemories(interaction.guildId, scope, userId);
+      const pageCount = Math.max(1, Math.ceil(memories.length / MEMORIES_PER_PAGE));
+      await interaction.showModal(buildJumpToMemoryPageModal(scope, page, pageCount));
       return;
     }
     if (action === "clear") {
@@ -365,6 +401,17 @@ async function handleAiMemoryPanelInteraction(interaction) {
       result.deletedCount ? `${result.deletedCount} deleted` : null,
     ].filter(Boolean).join(", ");
     notice = changes ? `✅ ${changes}.` : "No relevant memory changes were needed.";
+  } else if (action === "jump-modal") {
+    const requestedPage = Number(interaction.fields.getTextInputValue("memory-page").trim());
+    const memories = await db.getAiMemories(interaction.guildId, scope, userId);
+    const pageCount = Math.max(1, Math.ceil(memories.length / MEMORIES_PER_PAGE));
+    if (!Number.isInteger(requestedPage) || requestedPage < 1 || requestedPage > pageCount) {
+      notice = `Enter a page number from 1 to ${pageCount}.`;
+    } else {
+      const components = await buildAiMemoryPanel(interaction, scope, requestedPage - 1);
+      await interaction.editReply(panelResponse(components));
+      return;
+    }
   } else {
     throw new Error(`Unknown AI memory modal action: ${action}`);
   }

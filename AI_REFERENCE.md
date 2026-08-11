@@ -286,11 +286,13 @@ Titles are limited to 100 characters and content to 2,000 characters. Creating a
 `/ai memory` opens an ephemeral Components V2 panel showing three complete categorized entries per page. Every entry is rendered as a `SectionBuilder` with its own Delete accessory button. The panel also provides:
 
 - personal/server scope switching for members with Manage Server;
-- Previous and Next pagination;
+- a dedicated navigation row with Previous, Next, and a clickable `Page X of Y` counter that opens a direct page-jump modal;
 - an Add modal with category, title, and content fields;
 - one Correct button whose single prompt can create, update, or delete every relevant entry through one structured Gemini call;
 - a confirmed Clear all action;
 - a guild-wide pause/enable button for members with Manage Server.
+
+Add, Correct, and Clear all occupy a separate management row below navigation. Both rows remain inside the same Components V2 container.
 
 Delete, Add, Clear, and correction operations refresh the original panel and show a compact result notice. Personal operations always target the interacting member. Server controls re-check Manage Server on every interaction instead of trusting button visibility.
 
