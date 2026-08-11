@@ -77,6 +77,32 @@ function resolveMentions(value, guild, client) {
     .replace(/<\/([^:>]+):\d+>/g, "/$1");
 }
 
+function formatMemoryDiscordReferences(value, guild, client) {
+  return String(value ?? "").replace(
+    /<@&(\d+)>|<#(\d+)>|<@!?(\d+)>|\b(\d{17,20})\b/g,
+    (reference, mentionedRoleId, mentionedChannelId, mentionedUserId, bareId) => {
+      const discordId = mentionedRoleId || mentionedChannelId || mentionedUserId || bareId;
+
+      if (mentionedRoleId || bareId) {
+        const role = guild.roles.cache.get(discordId);
+        if (role) return `@${role.name} (<@&${discordId}>)`;
+      }
+
+      if (mentionedChannelId || bareId) {
+        const channel = guild.channels.cache.get(discordId);
+        if (channel) return `#${channel.name} (<#${discordId}>)`;
+      }
+
+      const member = guild.members.cache.get(discordId);
+      const user = member?.user || client.users.cache.get(discordId);
+      const name = member?.displayName || user?.globalName || user?.username;
+      if (name) return `@${name} (<@${discordId}>)`;
+
+      return reference.startsWith("<") ? reference : `<@${discordId}>`;
+    },
+  );
+}
+
 function splitReplyText(content) {
   const chunks = [];
   let remaining = content.trim();
@@ -115,20 +141,32 @@ function selectRelevantMemories(memories, requestText, maximumMemories) {
     requestText,
   );
 
-  return memories
-    .map((memory, index) => {
-      const keyTokens = tokenize(
-        `${memory.key.replaceAll("_", " ")} ${memory.key.replaceAll("_", "")}`,
-      );
-      const valueTokens = tokenize(memory.value);
-      let score = asksAboutMemory ? 1 : 0;
-      for (const token of requestTokens) {
-        if (keyTokens.has(token)) score += 3;
-        if (valueTokens.has(token)) score += 1;
-      }
-      return { memory, score, index };
-    })
-    .filter(({ score }) => score > 0)
+  const scoredMemories = memories.map((memory, index) => {
+    const keyTokens = tokenize(
+      `${memory.key.replaceAll("_", " ")} ${memory.key.replaceAll("_", "")}`,
+    );
+    const valueTokens = tokenize(memory.value);
+    let score = asksAboutMemory ? 1 : 0;
+    for (const token of requestTokens) {
+      if (keyTokens.has(token)) score += 3;
+      if (valueTokens.has(token)) score += 1;
+    }
+    return { memory, score, index };
+  });
+  const highestScore = scoredMemories.reduce(
+    (highest, { score }) => Math.max(highest, score),
+    0,
+  );
+  if (!highestScore) return [];
+
+  const strongestMatches = scoredMemories.filter(({ score }) => score === highestScore);
+  if (!asksAboutMemory && highestScore === 1 && strongestMatches.length > 1) {
+    return [];
+  }
+
+  const minimumRelevantScore = Math.max(1, Math.ceil(highestScore / 2));
+  return scoredMemories
+    .filter(({ score }) => score >= minimumRelevantScore)
     .sort((left, right) => right.score - left.score || left.index - right.index)
     .slice(0, maximumMemories)
     .map(({ memory }) => memory);
@@ -459,14 +497,17 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
     memoryRequestText,
     MAX_GUILD_MEMORIES_IN_CONTEXT,
   );
+  const formatMemoryFacts = (memories) => memories
+    .map((memory) => `- ${formatScalar(
+      formatMemoryDiscordReferences(memory.value, server.guild, message.client),
+    )}`)
+    .join("\n");
+  const personalFacts = formatMemoryFacts(relevantUserMemories);
+  const serverFacts = formatMemoryFacts(relevantGuildMemories);
   const longTermMemory = [
-    ...relevantUserMemories.map((memory) =>
-      `global_user_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
-    ),
-    ...relevantGuildMemories.map((memory) =>
-      `server_memory ${formatScalar(memory.key)}: ${formatScalar(memory.value)}`,
-    ),
-  ].join("\n");
+    personalFacts ? `Facts about the current author:\n${personalFacts}` : null,
+    serverFacts ? `Facts about this server:\n${serverFacts}` : null,
+  ].filter(Boolean).join("\n\n");
 
   const referenceContext = [
     "# Server context (reference only)",
@@ -479,7 +520,7 @@ function buildGeminiMessages(message, repliedMessage, history, server) {
     `# Channel registry\nchannels:\n${channelRegistry || "  {}"}`,
     roleRegistry ? `# Role registry\nroles:\n${roleRegistry}` : null,
     longTermMemory
-      ? `# Relevant long-term memory\nGlobal user memories belong only to the current Discord author and follow that user across servers. Server memories are shared only within this server. Use memories only when relevant. They may become stale; the latest direct user statement and authoritative server context take precedence. Never turn an unrelated memory into a callback.\n${longTermMemory}`
+      ? `# Relevant long-term facts\nFacts about the current author belong only to that user and follow them across servers. Server facts are shared only within this server. Use these facts only when relevant. They may become stale; the latest direct user statement and authoritative server context take precedence. Answer from them directly without referring to records, keys, retrieval, or hidden context. Discord references include a readable name followed by mention syntax; use the mention syntax when identifying that user, role, or channel. Never turn an unrelated fact into a callback.\n${longTermMemory}`
       : null,
     channelInventory ? `Channels: ${channelInventory}` : null,
     roleInventory ? `Roles: ${roleInventory}` : null,

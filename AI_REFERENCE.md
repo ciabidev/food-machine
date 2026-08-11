@@ -279,8 +279,9 @@ The two Remember context actions do not open a modal. They:
 3. discard earlier context separated by more than two hours;
 4. add the selected message's direct reply target when available;
 5. serialize author IDs, usernames, display names, reply references, and compact text;
-6. ask Gemini at temperature 0.1 for structured JSON containing zero to ten `key` and `value` memories;
-7. directly save or upsert each extracted memory in the database.
+6. ask Gemini at temperature 0.1 for structured JSON containing zero to twenty `key` and `value` memories;
+7. for a selected message of at least 1,000 characters or twelve lines, run a second structured coverage audit that returns only durable source details missing from the initial extraction;
+8. directly save or upsert each extracted memory in the database.
 
 The selected message has a 12,000-character extraction budget, while each nearby context message remains limited to 800 characters. Extraction does not load the full conversational prompt, rules, samples, images, or existing memory. This preserves the authoritative source without allowing neighboring context to dominate the request.
 
@@ -292,10 +293,12 @@ Keys are normalized to lowercase snake_case, must contain a letter or number, an
 
 Memory retrieval is intentionally simple and direct; there is no embedding service, vector database, cache, background summarizer, or automatic memory writer.
 
-For each request, the database fetches the current author's global personal records and the current guild's shared records. A lexical scorer tokenizes the current message plus direct reply content, ignores common filler words, weights key matches more heavily than value matches, and injects at most:
+For each request, the database fetches the current author's global personal records and the current guild's shared records. A lexical scorer tokenizes the current message plus direct reply content, ignores common filler words, and weights key matches more heavily than value matches. To prevent a weak generic word from pulling unrelated facts into the prompt, only records scoring at least half as highly as the best match are eligible. When several records tie at the weakest possible one-word value match, none are injected unless the user explicitly asks what the bot remembers. It injects at most:
 
 - ten relevant personal memories;
 - ten relevant server memories.
+
+Memory keys are used only by the lexical scorer and are not shown to Gemini. Selected values are supplied as natural reference facts. Discord user, role, and channel IDs inside those values are resolved from current guild caches and represented with both a readable name and Discord mention syntax. AI output keeps `allowedMentions: { parse: [] }`, so a returned mention renders normally without notifying its target.
 
 Two-character terms are retained so acronyms can match. Questions such as “what do you remember about me?” make recent memories eligible even without a keyword overlap. The prompt says memories may be stale, direct current statements win, and unrelated memories must not become recurring callbacks.
 
@@ -332,9 +335,9 @@ The model and response-time footer is deliberately outside the Components V2 foo
 
 ## Provider behavior and failures
 
-Gemini requests use the REST `v1beta` `generateContent` endpoint with an `x-goog-api-key` header. The default generation limit is 8,192 output tokens, although most Discord replies should be far shorter because the prompt asks for situational brevity. Memory extraction overrides the generation configuration with a 300-token JSON response.
+Gemini requests use the REST `v1beta` `generateContent` endpoint with an `x-goog-api-key` header. The default generation limit is 8,192 output tokens, although most Discord replies should be far shorter because the prompt asks for situational brevity. Memory extraction overrides that generation configuration as described below.
 
-The request timeout is 30 seconds. Memory extraction uses a 2,048-token JSON response budget with minimal Gemini reasoning. The primary and fallback models are not load-balanced:
+The request timeout is 30 seconds. Memory extraction uses a 4,096-token JSON response budget with low Gemini reasoning. The primary and fallback models are not load-balanced:
 
 - success returns immediately;
 - HTTP 429 or 503 from the primary tries the fallback once;

@@ -4,7 +4,9 @@ const MEMORY_CONTEXT_MESSAGES = 8;
 const MAX_NEARBY_MESSAGE_LENGTH = 800;
 const MAX_SELECTED_MESSAGE_LENGTH = 12_000;
 const MAX_MEMORY_CONTEXT_GAP_MS = 2 * 60 * 60 * 1_000;
-const MAX_EXTRACTED_MEMORIES = 10;
+const MAX_EXTRACTED_MEMORIES = 20;
+const COVERAGE_REVIEW_MINIMUM_LENGTH = 1_000;
+const COVERAGE_REVIEW_MINIMUM_LINES = 12;
 const USER_MEMORY_EXTRACTION_PROMPT = [
   `Extract every distinct, durable memory supported by the selected Discord message, up to ${MAX_EXTRACTED_MEMORIES} memories, about its author.`,
   "The selected message is the primary source. Nearby messages and its reply target are context only; use them to resolve references and meaning, never to attribute another speaker's statement to the selected author.",
@@ -23,6 +25,28 @@ const SERVER_MEMORY_EXTRACTION_PROMPT = [
   "For each memory, create a stable lowercase snake_case key no longer than 50 characters and a self-contained value no longer than 500 characters. When several memories concern one subject, repeat useful subject words in their keys so they can be retrieved together.",
   "Return an empty memories array when the selected message contains no meaningful server knowledge or contains credentials, authentication secrets, exact private addresses, private moderation information, or similarly dangerous private data.",
 ].join("\n");
+const MEMORY_COVERAGE_REVIEW_PROMPT = [
+  "Audit the proposed memories against the complete selected message line by line.",
+  "Return only additional memories needed to preserve durable facts, instructions, procedures, requirements, permissions, relationships, quantities, and named mappings that the proposed memories omitted or only partially preserved.",
+  "Do not repeat a proposed memory when it already preserves the source detail accurately. Return an empty memories array when nothing durable is missing.",
+].join("\n");
+const MEMORY_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    memories: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          value: { type: "string" },
+        },
+        required: ["key", "value"],
+      },
+    },
+  },
+  required: ["memories"],
+};
 
 function formatMemoryContextContent(message, maximumLength) {
   const messageText = message.author?.id === message.client.user.id
@@ -104,48 +128,19 @@ async function collectMemoryContext(targetMessage) {
   );
 }
 
-async function extractAiMemory(targetMessage, scope) {
-  if (!["user", "guild"].includes(scope)) {
-    throw new RangeError('Memory scope must be either "user" or "guild".');
-  }
-  const contextMessages = await collectMemoryContext(targetMessage);
-  const subjectName = targetMessage.member?.displayName
-    || targetMessage.author.globalName
-    || targetMessage.author.username;
-  const context = [
-    `Memory scope: ${scope === "user" ? "personal user memory" : "server-wide memory"}`,
-    `Selected author: ${JSON.stringify(subjectName)} [${targetMessage.author.id}]`,
-    "Nearby Discord messages (oldest to newest):",
-    ...contextMessages.map((message) => formatMemoryContextMessage(message, targetMessage.id)),
-  ].join("\n\n");
+async function requestGeminiMemoryExtraction(context, systemPrompt) {
   const response = await generateGeminiResponse(
     [{ role: "user", content: context }],
-    scope === "user" ? USER_MEMORY_EXTRACTION_PROMPT : SERVER_MEMORY_EXTRACTION_PROMPT,
+    systemPrompt,
     {
       generationConfig: {
-        maxOutputTokens: 2_048,
+        maxOutputTokens: 4_096,
         temperature: 0.1,
         thinkingConfig: {
-          thinkingLevel: "minimal",
+          thinkingLevel: "low",
         },
         responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            memories: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  key: { type: "string" },
-                  value: { type: "string" },
-                },
-                required: ["key", "value"],
-              },
-            },
-          },
-          required: ["memories"],
-        },
+        responseSchema: MEMORY_RESPONSE_SCHEMA,
       },
     },
   );
@@ -181,6 +176,56 @@ async function extractAiMemory(targetMessage, scope) {
   }
 
   return memories;
+}
+
+async function extractAiMemory(targetMessage, scope) {
+  if (!["user", "guild"].includes(scope)) {
+    throw new RangeError('Memory scope must be either "user" or "guild".');
+  }
+  const contextMessages = await collectMemoryContext(targetMessage);
+  const subjectName = targetMessage.member?.displayName
+    || targetMessage.author.globalName
+    || targetMessage.author.username;
+  const context = [
+    `Memory scope: ${scope === "user" ? "personal user memory" : "server-wide memory"}`,
+    `Selected author: ${JSON.stringify(subjectName)} [${targetMessage.author.id}]`,
+    "Nearby Discord messages (oldest to newest):",
+    ...contextMessages.map((message) => formatMemoryContextMessage(message, targetMessage.id)),
+  ].join("\n\n");
+  const extractionPrompt = scope === "user"
+    ? USER_MEMORY_EXTRACTION_PROMPT
+    : SERVER_MEMORY_EXTRACTION_PROMPT;
+  const initialMemories = await requestGeminiMemoryExtraction(context, extractionPrompt);
+  const selectedContent = formatMemoryContextContent(
+    targetMessage,
+    MAX_SELECTED_MESSAGE_LENGTH,
+  );
+  const selectedLineCount = selectedContent.split("\n").length;
+  const needsCoverageReview = (
+    selectedContent.length >= COVERAGE_REVIEW_MINIMUM_LENGTH
+    || selectedLineCount >= COVERAGE_REVIEW_MINIMUM_LINES
+  );
+  if (!needsCoverageReview) return initialMemories;
+
+  const coverageContext = [
+    context,
+    "# Proposed memories to audit",
+    JSON.stringify({ memories: initialMemories }, null, 2),
+  ].join("\n\n");
+  const missingMemories = await requestGeminiMemoryExtraction(
+    coverageContext,
+    `${extractionPrompt}\n\n# Coverage review\n${MEMORY_COVERAGE_REVIEW_PROMPT}`,
+  );
+  const memoriesByKey = new Map();
+  for (const memory of [...initialMemories, ...missingMemories]) {
+    const normalizedKey = memory.key.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const existingMemory = memoriesByKey.get(normalizedKey);
+    if (!existingMemory || memory.value.length > existingMemory.value.length) {
+      memoriesByKey.set(normalizedKey, memory);
+    }
+  }
+
+  return [...memoriesByKey.values()].slice(0, MAX_EXTRACTED_MEMORIES);
 }
 
 module.exports = { extractAiMemory };
