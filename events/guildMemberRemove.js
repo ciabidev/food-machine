@@ -17,24 +17,28 @@ module.exports = {
 
     if (channels.length === 0) return;
 
-    const components = [
-      new ContainerBuilder().addSectionComponents(
-        new SectionBuilder()
-          .setThumbnailAccessory(
-            new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
-          )
-          .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-              `### Until next time, <@${member.id}>!\n-# <@${member.id}> has left the server. We now have ${member.guild.memberCount} members.`,
-            ),
-          ),
-      ),
-    ];
+    await Promise.all(channels.map(async (channel) => {
+      const content = (
+        await member.client.modules.messageVariables.replaceMessageVariables(
+          settings.leave_message,
+          member,
+          channel,
+        )
+      ).slice(0, 4_000);
 
-    await Promise.all(channels.map((channel) => channel.send({
-      components,
-      flags: MessageFlags.IsComponentsV2,
-      allowedMentions: { parse: [] },
-    })));
+      await channel.send({
+        components: [
+          new ContainerBuilder().addSectionComponents(
+            new SectionBuilder()
+              .setThumbnailAccessory(
+                new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
+              )
+              .addTextDisplayComponents(new TextDisplayBuilder().setContent(content)),
+          ),
+        ],
+        flags: MessageFlags.IsComponentsV2,
+        allowedMentions: { parse: [] },
+      });
+    }));
   },
 };

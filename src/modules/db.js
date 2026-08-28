@@ -9,6 +9,9 @@ const {
 
 const dbName = environment;
 
+const DEFAULT_WELCOME_MESSAGE = "welcome {user.mention} to {guild.name}!\n-# We now have {guild.count} members.";
+const DEFAULT_LEAVE_MESSAGE = "### Until next time, {user.mention}!\n-# {user.name} has left the server. We now have {guild.count} members.";
+
 const DEFAULT_LEVELING_SETTINGS = Object.freeze({
   enabled: true,
   xp_min: 5,
@@ -112,6 +115,14 @@ async function initDb() {
         { "ai.memory_enabled": { $exists: false } },
         { $set: { "ai.memory_enabled": DEFAULT_AI_SETTINGS.memory_enabled } },
       );
+      await db.collection("guild_settings").updateMany(
+        { welcome_message: { $exists: false } },
+        { $set: { welcome_message: DEFAULT_WELCOME_MESSAGE } },
+      );
+      await db.collection("guild_settings").updateMany(
+        { leave_message: { $exists: false } },
+        { $set: { leave_message: DEFAULT_LEAVE_MESSAGE } },
+      );
       await db.collection("ai_memories").updateMany(
         {
           $or: [
@@ -183,6 +194,8 @@ async function getSettings(guildId) {
     ...document,
     welcome_channel_ids: document?.welcome_channel_ids
       ?? (document?.welcome_channel_id ? [document.welcome_channel_id] : []),
+    welcome_message: document?.welcome_message || DEFAULT_WELCOME_MESSAGE,
+    leave_message: document?.leave_message || DEFAULT_LEAVE_MESSAGE,
     leveling: {
       ...DEFAULT_LEVELING_SETTINGS,
       ...document?.leveling,
@@ -279,6 +292,30 @@ async function setWelcomeChannels(guildId, channelIds) {
       welcome_channel_ids: uniqueChannelIds,
     },
     $unset: { welcome_channel_id: "" },
+  });
+}
+
+async function setWelcomeMessages(guildId, welcomeMessage, leaveMessage) {
+  for (const [name, message] of [
+    ["Welcome", welcomeMessage],
+    ["Leave", leaveMessage],
+  ]) {
+    if (
+      typeof message !== "string"
+      || message.length === 0
+      || message.length > 4_000
+    ) {
+      throw new RangeError(
+        `${name} message must be between 1 and 4000 characters.`,
+      );
+    }
+  }
+
+  return updateGuildSettings(guildId, {
+    $set: {
+      welcome_message: welcomeMessage,
+      leave_message: leaveMessage,
+    },
   });
 }
 
@@ -1105,6 +1142,7 @@ module.exports = {
   getLevelRank,
   setLevelProfile,
   setWelcomeChannels,
+  setWelcomeMessages,
   setLevelingEnabled,
   setAiEnabled,
   setAiMemoryEnabled,

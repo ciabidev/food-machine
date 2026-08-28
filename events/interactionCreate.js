@@ -619,7 +619,22 @@ module.exports = {
             !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
           ) {
             await interaction.reply({
-              content: "You need Manage Server to change the welcome channels.",
+              content: "You need Manage Server to change the welcome settings.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          if (interaction.customId === "welcome-settings:message-modal") {
+            const welcomeMessage = interaction.fields.getTextInputValue("welcome-message");
+            const leaveMessage = interaction.fields.getTextInputValue("leave-message");
+            await db.setWelcomeMessages(
+              interaction.guildId,
+              welcomeMessage,
+              leaveMessage,
+            );
+            await interaction.reply({
+              content: "The welcome and leave messages have been saved.",
               flags: MessageFlags.Ephemeral,
             });
             return;

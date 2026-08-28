@@ -3,16 +3,13 @@ const {
   ChannelType,
   LabelBuilder,
   ModalBuilder,
-  PermissionFlagsBits,
-  SlashCommandBuilder,
+  SlashCommandSubcommandBuilder,
 } = require("discord.js");
 
 module.exports = {
-  data: new SlashCommandBuilder()
-    .setName("welcome")
-    .setDescription("Configure this server's welcome channels.")
-    .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  data: new SlashCommandSubcommandBuilder()
+    .setName("channels")
+    .setDescription("Choose where welcome and leave messages are sent."),
 
   async execute(interaction) {
     const settings = await interaction.client.modules.db.getSettings(interaction.guildId);

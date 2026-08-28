@@ -7,14 +7,6 @@ const {
   ThumbnailBuilder,
 } = require("discord.js");
 
-function formatOrdinal(number) {
-  const lastTwoDigits = number % 100;
-
-  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) return `${number}th`;
-
-  return `${number}${{ 1: "st", 2: "nd", 3: "rd" }[number % 10] || "th"}`;
-}
-
 module.exports = {
   name: Events.GuildMemberAdd,
   async execute(member) {
@@ -25,24 +17,24 @@ module.exports = {
 
     if (channels.length === 0) return;
 
-    const joinPosition = formatOrdinal(member.guild.memberCount);
-    const components = [
-      new ContainerBuilder().addSectionComponents(
-        new SectionBuilder()
-          .setThumbnailAccessory(
-            new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
-          )
-          .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-              `### Welcome <@${member.id}> to ${member.guild.name}!\n-# You are the ${joinPosition} user to join.`,
-            ),
-          ),
-      ),
-    ];
-
     await Promise.all(channels.map(async (channel) => {
+      const content = (
+        await member.client.modules.messageVariables.replaceMessageVariables(
+          settings.welcome_message,
+          member,
+          channel,
+        )
+      ).slice(0, 4_000);
       const welcomeMessage = await channel.send({
-        components,
+        components: [
+          new ContainerBuilder().addSectionComponents(
+            new SectionBuilder()
+              .setThumbnailAccessory(
+                new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
+              )
+              .addTextDisplayComponents(new TextDisplayBuilder().setContent(content)),
+          ),
+        ],
         flags: MessageFlags.IsComponentsV2,
         allowedMentions: { users: [member.id] },
       });
