@@ -132,7 +132,7 @@ module.exports = {
               anchored ? "Unanchor" : "Anchor",
               ButtonStyle.Secondary,
               "⚓",
-              !anchored && !settings.bubble.anchored_channel_limit,
+              !anchored && settings.bubble.anchored_channel_limit === 0,
             ),
           ),
         )

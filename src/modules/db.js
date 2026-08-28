@@ -27,8 +27,8 @@ const DEFAULT_BUBBLE_SETTINGS = Object.freeze({
   hub_channel_id: null,
   inactive_category_id: null,
   inactive_channel_limit: 0,
-  anchored_channel_limit: 0,
-  channel_prefix: "",
+  anchored_channel_limit: null,
+  channel_name: "{user.name}'s Bubble",
 });
 
 const DEFAULT_COLOR_SETTINGS = Object.freeze({
@@ -203,6 +203,10 @@ async function getSettings(guildId) {
     bubble: {
       ...DEFAULT_BUBBLE_SETTINGS,
       ...document?.bubble,
+      channel_name: document?.bubble?.channel_name
+        ?? (document?.bubble?.channel_prefix
+          ? `${document.bubble.channel_prefix} {user.name}'s bubble`
+          : DEFAULT_BUBBLE_SETTINGS.channel_name),
     },
     color: {
       ...DEFAULT_COLOR_SETTINGS,
@@ -407,7 +411,10 @@ async function setBubbleInactiveLimit(guildId, inactiveLimit) {
 }
 
 async function setBubbleAnchoredLimit(guildId, anchoredLimit) {
-  if (!Number.isInteger(anchoredLimit) || anchoredLimit < 0 || anchoredLimit > 99) {
+  if (
+    anchoredLimit !== null
+    && (!Number.isInteger(anchoredLimit) || anchoredLimit < 0 || anchoredLimit > 99)
+  ) {
     throw new RangeError("Anchored channel limit must be between 0 and 99.");
   }
 
@@ -793,13 +800,14 @@ async function clearAiMemories(guildId, scope, userId) {
   );
 }
 
-async function setBubbleChannelPrefix(guildId, channelPrefix) {
-  if (typeof channelPrefix !== "string" || channelPrefix.length > 25) {
-    throw new RangeError("Bubble channel prefix must be 25 characters or fewer.");
+async function setBubbleChannelName(guildId, channelName) {
+  if (typeof channelName !== "string" || channelName.length > 100) {
+    throw new RangeError("Default channel name must be 100 characters or fewer.");
   }
 
   return updateGuildSettings(guildId, {
-    $set: { "bubble.channel_prefix": channelPrefix },
+    $set: { "bubble.channel_name": channelName },
+    $unset: { "bubble.channel_prefix": "" },
   });
 }
 
@@ -1191,7 +1199,7 @@ module.exports = {
   setBubbleInactiveCategory,
   setBubbleInactiveLimit,
   setBubbleAnchoredLimit,
-  setBubbleChannelPrefix,
+  setBubbleChannelName,
   setColorAnchor,
   setColorPickerMessage,
   setBubbleGuideMessage,

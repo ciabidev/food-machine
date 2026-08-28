@@ -467,8 +467,9 @@ module.exports = {
           const inactiveLimitInput = interaction.fields.getTextInputValue("inactive-limit").trim();
           const inactiveLimit = inactiveLimitInput ? Number(inactiveLimitInput) : 0;
           const anchoredLimitInput = interaction.fields.getTextInputValue("anchored-limit").trim();
-          const anchoredLimit = anchoredLimitInput ? Number(anchoredLimitInput) : 0;
-          const channelPrefix = interaction.fields.getTextInputValue("channel-prefix").trim();
+          const anchoredLimit = anchoredLimitInput ? Number(anchoredLimitInput) : null;
+          const channelName = interaction.fields.getTextInputValue("channel-name").trim()
+            || "{user.name}'s bubble";
 
           if (
             (inactiveLimitInput && !/^\d+$/.test(inactiveLimitInput)) ||
@@ -510,17 +511,19 @@ module.exports = {
             interaction.guildId,
             anchoredLimit,
           );
-          await interaction.client.modules.db.setBubbleChannelPrefix(
+          await interaction.client.modules.db.setBubbleChannelName(
             interaction.guildId,
-            channelPrefix,
+            channelName,
           );
 
           const anchoredBubbles = await interaction.client.modules.db.getAnchoredBubbles(
             interaction.guildId,
           );
-          const removedAnchors = anchoredLimit
-            ? anchoredBubbles.slice(anchoredLimit)
-            : anchoredBubbles;
+          const removedAnchors = anchoredLimit === 0
+            ? anchoredBubbles
+            : anchoredLimit === null
+              ? []
+              : anchoredBubbles.slice(anchoredLimit);
           for (const anchoredBubble of removedAnchors) {
             await interaction.client.modules.db.setBubbleAnchored(
               interaction.guildId,
@@ -581,9 +584,11 @@ module.exports = {
             `> **Creation hub »** ${hub || "Disabled"}`,
             `> **Inactive category »** ${inactiveCategory || "Not set"}`,
             `> **Inactive channel limit »** ${inactiveLimit || "No limit"}`,
-            `> **Anchored channel limit »** ${anchoredLimit || "Disabled"}`,
-            `> **Bubble channel prefix »** ${channelPrefix ? `\`${channelPrefix}\`` : "None"}`,
-            "-# Prefix changes apply when a bubble channel is created or renamed.",
+            `> **Anchored channel limit »** ${anchoredLimit === null
+              ? "No limit"
+              : anchoredLimit || "Disabled"}`,
+            `> **Default channel name »** \`${channelName}\``,
+            "-# Default channel name changes apply when a bubble channel is created.",
           ];
           if (removedAnchors.length) {
             savedSettings.push(`-# Unanchored ${removedAnchors.length} excess bubble(s).`);
@@ -1159,9 +1164,12 @@ module.exports = {
               if (updatedAnchored) {
                 const anchoredLimit = settings.bubble.anchored_channel_limit;
                 const anchoredBubbles = await db.getAnchoredBubbles(interaction.guildId);
-                if (!anchoredLimit || anchoredBubbles.length >= anchoredLimit) {
+                if (
+                  anchoredLimit === 0
+                  || (anchoredLimit !== null && anchoredBubbles.length >= anchoredLimit)
+                ) {
                   await interaction.reply({
-                    content: anchoredLimit
+                    content: anchoredLimit !== 0
                       ? "This server has no Anchor slots available. Please wait until someone unanchors their bubble."
                       : "Anchoring is disabled on this server.",
                     flags: MessageFlags.Ephemeral,
@@ -1281,10 +1289,7 @@ module.exports = {
               await db.setBubbleName(interaction.guildId, interaction.user.id, name);
 
               if (channel) {
-                const channelName = interaction.client.modules.bubbleChannelName(
-                  settings.bubble.channel_prefix,
-                  name,
-                );
+                const channelName = interaction.client.modules.bubbleChannelName(name);
                 if (channel.name !== channelName) {
                   await channel.setName(channelName, "Bubble renamed by owner");
                 }

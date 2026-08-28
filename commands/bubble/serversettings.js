@@ -46,24 +46,24 @@ module.exports = {
     const anchoredLimit = new TextInputBuilder()
       .setCustomId("anchored-limit")
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder("Disabled")
+      .setPlaceholder("No limit (enabled)")
       .setRequired(false)
       .setMaxLength(2);
-    const channelPrefix = new TextInputBuilder()
-      .setCustomId("channel-prefix")
+    const channelName = new TextInputBuilder()
+      .setCustomId("channel-name")
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder("No prefix")
+      .setPlaceholder("{user.name}'s bubble")
       .setRequired(false)
-      .setMaxLength(25);
+      .setMaxLength(100);
 
     if (settings.bubble.inactive_channel_limit) {
       inactiveLimit.setValue(String(settings.bubble.inactive_channel_limit));
     }
-    if (settings.bubble.anchored_channel_limit) {
+    if (settings.bubble.anchored_channel_limit !== null) {
       anchoredLimit.setValue(String(settings.bubble.anchored_channel_limit));
     }
-    if (settings.bubble.channel_prefix) {
-      channelPrefix.setValue(settings.bubble.channel_prefix);
+    if (settings.bubble.channel_name) {
+      channelName.setValue(settings.bubble.channel_name);
     }
 
     if (
@@ -105,13 +105,13 @@ module.exports = {
           new LabelBuilder()
             .setLabel("Anchored Channel Limit")
             .setDescription(
-              "Users can anchor their bubble to keep it active, even after leaving it. Leave blank to disable.",
+              "Users can anchor their bubble to keep it active. Enter 0 to disable; blank allows any number.",
             )
             .setTextInputComponent(anchoredLimit),
           new LabelBuilder()
-            .setLabel("Bubble Channel Prefix")
-            .setDescription("Added before every bubble channel name with a space. Leave blank for none.")
-            .setTextInputComponent(channelPrefix),
+            .setLabel("Default Channel Name")
+            .setDescription("Supports the same variables as messages. Blank uses {user.name}'s bubble.")
+            .setTextInputComponent(channelName),
         ),
     );
   },

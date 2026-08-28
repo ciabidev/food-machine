@@ -23,7 +23,9 @@ module.exports = {
       const host = newState.member;
       const hubCategory = newState.channel?.parent || null;
       const bubble = await db.getBubble(guildId, null, host.user.id);
-      const bubbleName = bubble?.name || `${host.user.username}'s Bubble`;
+      const defaultBubbleName = await newState.client.modules.messageVariables
+        .replaceMessageVariables(settings.bubble.channel_name, host, newState.channel);
+      const bubbleName = bubble?.name || defaultBubbleName;
 
       try {
         let bubbleChannel = bubble?.channel_id
@@ -55,10 +57,7 @@ module.exports = {
           }
 
           bubbleChannel = await newState.guild.channels.create({
-            name: newState.client.modules.bubbleChannelName(
-              settings.bubble.channel_prefix,
-              bubbleName,
-            ),
+            name: newState.client.modules.bubbleChannelName(bubbleName),
             parent: hubCategory,
             type: ChannelType.GuildVoice,
             userLimit: bubble?.user_limit || 0,
