@@ -1,5 +1,4 @@
 const {
-  ContainerBuilder,
   Events,
   MessageFlags,
   SectionBuilder,
@@ -28,13 +27,11 @@ module.exports = {
 
       await channel.send({
         components: [
-          new ContainerBuilder().addSectionComponents(
-            new SectionBuilder()
-              .setThumbnailAccessory(
-                new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
-              )
-              .addTextDisplayComponents(new TextDisplayBuilder().setContent(content)),
-          ),
+          new SectionBuilder()
+            .setThumbnailAccessory(
+              new ThumbnailBuilder().setURL(member.user.displayAvatarURL({ size: 256 })),
+            )
+            .addTextDisplayComponents(new TextDisplayBuilder().setContent(content)),
         ],
         flags: MessageFlags.IsComponentsV2,
         allowedMentions: { parse: [] },

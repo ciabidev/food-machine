@@ -1,5 +1,4 @@
 const {
-  ContainerBuilder,
   MessageFlags,
   SectionBuilder,
   SlashCommandSubcommandBuilder,
@@ -8,13 +7,12 @@ const {
 } = require("discord.js");
 
 function buildPreview(title, content, avatarUrl) {
-  return new ContainerBuilder()
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ${title}`))
-    .addSectionComponents(
-      new SectionBuilder()
-        .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
-        .addTextDisplayComponents(new TextDisplayBuilder().setContent(content.slice(0, 3_970))),
-    );
+  return [
+    new TextDisplayBuilder().setContent(`## ${title}`),
+    new SectionBuilder()
+      .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
+      .addTextDisplayComponents(new TextDisplayBuilder().setContent(content.slice(0, 3_970))),
+  ];
 }
 
 module.exports = {
@@ -44,11 +42,11 @@ module.exports = {
 
     await interaction.reply({
       ...response,
-      components: [buildPreview("Welcome message", welcomeContent, avatarUrl)],
+      components: buildPreview("Welcome message", welcomeContent, avatarUrl),
     });
     await interaction.followUp({
       ...response,
-      components: [buildPreview("Leave message", leaveContent, avatarUrl)],
+      components: buildPreview("Leave message", leaveContent, avatarUrl),
     });
   },
 };
