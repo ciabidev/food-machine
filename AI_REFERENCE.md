@@ -322,7 +322,7 @@ For each request, the database fetches the current author's global personal entr
 - ten relevant personal memories;
 - ten relevant server memories.
 
-Selected content is supplied as natural reference facts. Discord user, role, and channel IDs inside that content are resolved from current guild caches and represented with both a readable name and Discord mention syntax. AI output keeps `allowedMentions: { parse: [] }`, so a returned mention renders normally without notifying its target.
+Selected content is supplied as natural reference facts. Discord user, role, and channel IDs inside that content are resolved from current guild caches and represented with both a readable name and Discord mention syntax. Discord's native reply mention notifies the author of the message receiving the first AI response. Other generated mentions render normally without notifying their targets.
 
 The same relevant personal entries are also supplied with IDs, categories, titles, and content for real-time maintenance. Gemini may return a delimited private JSON block with `create`, `update`, and `delete` arrays. The application strips this block before food-card parsing or reply rendering, validates it, and applies it only to the current author's global personal scope. Malformed mutation data is ignored without failing the visible reply.
 
@@ -384,7 +384,6 @@ Every ordinary response ends with:
 -# Model » `<model>` • Response Time: `<duration>`
 ```
 
-Mentions are disabled on all AI output with `allowedMentions: { parse: [] }`, so generated text cannot ping users, roles, or everyone.
 
 ## AI statistics and request inspection
 
@@ -442,7 +441,7 @@ Important boundaries:
 - Server memories are guild-scoped and administrator-managed.
 - Asking the AI about another user's selected message does not expose that user's personal memory.
 - Context inspection is limited to the response requester or Manage Server.
-- Generated mentions cannot notify anyone.
+- Only Discord's native reply mention can notify the user receiving the AI response; other generated mentions cannot notify anyone.
 - Server context, message text, quotes, and nicknames cannot redefine authoritative Discord author IDs.
 
 ## Source map

@@ -1037,7 +1037,10 @@ async function handleMessage(
         }));
 
     for (const [index, response] of responses.entries()) {
-      const responseOptions = { ...response.options, allowedMentions: { parse: [] } };
+      const responseOptions = {
+        ...response.options,
+        allowedMentions: { parse: [], repliedUser: index === 0 },
+      };
       const send = () => index === 0
         ? message.reply(responseOptions)
         : message.channel.send(responseOptions);
