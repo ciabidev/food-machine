@@ -957,16 +957,27 @@ module.exports = {
       const bubbleOwnerId = action === "info-update"
         ? customIdParts[3]
         : interaction.user.id;
+      const isModalSubmit = interaction.isModalSubmit();
+
+      if (isModalSubmit) {
+        try {
+          await interaction.deferUpdate();
+        } catch (error) {
+          console.error("Failed to acknowledge bubble modal:", error);
+          return;
+        }
+      }
 
       const bubble = await db.getBubble(interaction.guildId, null, bubbleOwnerId);
 
       if (!bubble) {
-        await interaction.reply({
+        const response = {
           content: action === "info-update"
             ? "This bubble no longer exists."
             : "You don't own a bubble anymore. Please recreate one.",
           flags: MessageFlags.Ephemeral,
-        });
+        };
+        await (interaction.deferred ? interaction.followUp(response) : interaction.reply(response));
         return;
       }
       const settings = await db.getSettings(interaction.guildId);
@@ -1282,8 +1293,6 @@ module.exports = {
         try {
           switch (action) {
             case "rename": {
-              await interaction.deferUpdate();
-
               const name = interaction.fields.getTextInputValue("new-name");
 
               await db.setBubbleName(interaction.guildId, interaction.user.id, name);
@@ -1314,14 +1323,13 @@ module.exports = {
                 updatedUserLimit < 0 ||
                 updatedUserLimit > 99
               ) {
-                await interaction.reply({
+                await interaction.followUp({
                   content: "User limit must be a whole number from 0 to 99.",
                   flags: MessageFlags.Ephemeral,
                 });
                 return;
               }
 
-              await interaction.deferUpdate();
               await db.setBubbleUserLimit(
                 interaction.guildId,
                 interaction.user.id,
@@ -1353,7 +1361,6 @@ module.exports = {
                 ...(bubble.banned_user_ids || []),
               ];
 
-              await interaction.deferUpdate();
               await db.setBubbleTrustedUsers(
                 interaction.guildId,
                 interaction.user.id,
@@ -1389,7 +1396,6 @@ module.exports = {
                 ...(bubble.banned_user_ids || []),
               ];
 
-              await interaction.deferUpdate();
               await db.setBubbleBannedUsers(
                 interaction.guildId,
                 interaction.user.id,
@@ -1425,21 +1431,20 @@ module.exports = {
                 .fetch(selectedUser.id)
                 .catch(() => null);
               if (!channel || !member || member.voice.channelId !== channel.id) {
-                await interaction.reply({
+                await interaction.followUp({
                   content: "That user is not connected to your bubble.",
                   flags: MessageFlags.Ephemeral,
                 });
                 return;
               }
               if (member.id === interaction.user.id) {
-                await interaction.reply({
+                await interaction.followUp({
                   content: "You cannot kick yourself from your bubble.",
                   flags: MessageFlags.Ephemeral,
                 });
                 return;
               }
 
-              await interaction.deferUpdate();
               await member.voice.disconnect("Kicked by bubble owner");
               const components =
                 await interaction.client.modules.bubbleControlPanel.bubbleControlPanel(interaction);
